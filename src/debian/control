@@ -1,0 +1,12 @@
+Source: hone
+Section: kernel
+Priority: extra
+Maintainer: Brandon Carpenter
+Build-Depends: debhelper (>= 7)
+Standards-Version: 3.8.0
+
+Package: hone-dkms
+Architecture: all
+Depends: ${misc:Depends}, dkms (>= 2.1.0.0)
+Description: DKMS support for Hone packet-process correlation kernel module
+ Linux loadable kernel modules for peforming packet-to-process correlation.

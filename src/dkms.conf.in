@@ -1,0 +1,45 @@
+#
+# Copyright (C) 2011 Battelle Memorial Institute <http://www.battelle.org>
+#
+# Author: Brandon Carpenter
+#
+# This package is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This package is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+
+PACKAGE_VERSION="#MODULE_VERSION#"
+
+# Items below here should not have to change with each driver version
+PACKAGE_NAME="hone"
+#MAKE[0]="make -C ${kernel_source_dir} SUBDIRS=${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/build modules"
+#CLEAN="make -C ${kernel_source_dir} SUBDIRS=${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/build clean"
+
+BUILD_EXCLUSIVE_KERNEL="^2.6.[1-3][0-9]|3.*"
+
+BUILT_MODULE_NAME[0]="process_notify"
+DEST_MODULE_LOCATION[0]="/kernel/misc"
+STRIP[0]="no"
+
+BUILT_MODULE_NAME[1]="socket_notify"
+DEST_MODULE_LOCATION[1]="/kernel/misc"
+STRIP[1]="no"
+
+BUILT_MODULE_NAME[2]="packet_notify"
+DEST_MODULE_LOCATION[2]="/kernel/misc"
+STRIP[2]="no"
+
+BUILT_MODULE_NAME[3]="hone_notify"
+DEST_MODULE_LOCATION[3]="/kernel/misc"
+STRIP[3]="no"
+
+BUILT_MODULE_NAME[4]="honeevent"
+DEST_MODULE_LOCATION[4]="/kernel/misc"
+STRIP[4]="no"
+
