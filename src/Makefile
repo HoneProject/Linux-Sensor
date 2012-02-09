@@ -26,6 +26,7 @@ obj-$(CONFIG_SOCKET_NOTIFY) += socket_notify.o
 socket_notify-defsyms = inet_family_ops inet6_family_ops
 
 obj-$(CONFIG_PACKET_NOTIFY) += packet_notify.o
+packet_notify-defsyms = __udp6_lib_lookup nf_tproxy_get_sock_v4
 
 obj-$(CONFIG_PROCESS_NOTIFY) += process_notify.o
 

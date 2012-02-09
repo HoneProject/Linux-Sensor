@@ -88,7 +88,7 @@ static unsigned int nf_hook_v4_in(unsigned int hook, struct sk_buff *skb,
 	return NF_ACCEPT;
 }
 
-#ifdef CONFIG_IPV6
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 static unsigned int nf_hook_v6_in(unsigned int hook, struct sk_buff *skb,
 		const struct net_device *indev, const struct net_device *outdev,
 		int (*okfn)(struct sk_buff *))
@@ -118,7 +118,7 @@ static struct jprobe raw4_jprobe = {
 	.entry = packet_rcv_handler,
 };
 
-#ifdef CONFIG_IPV6
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 static struct jprobe raw6_jprobe = {
 	.kp.symbol_name = "rawv6_rcv",
 	.kp.fault_handler = fault_handler,
@@ -128,7 +128,7 @@ static struct jprobe raw6_jprobe = {
 
 static struct jprobe *inet_jprobes[] = {
 	&raw4_jprobe,
-#ifdef CONFIG_IPV6
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	&raw6_jprobe,
 #endif // CONFIG_IPV6
 };
@@ -150,7 +150,7 @@ static struct nf_hook_ops nf_inet_hooks[] = {
 		.hooknum = NF_INET_LOCAL_OUT,
 		.priority = INT_MAX,
 	},
-#ifdef CONFIG_IPV6
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	{
 		.list = {NULL, NULL},
 		.hook = nf_hook_v6_in,
