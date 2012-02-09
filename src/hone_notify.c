@@ -30,7 +30,11 @@ static struct kmem_cache *hone_cache;
 static RAW_NOTIFIER_HEAD(notifier_list);
 static DEFINE_RWLOCK(notifier_lock);
 
+#ifndef rcu_dereference_raw
+#define notifier_call_chain_empty() (rcu_dereference(notifier_list.head) == NULL)
+#else
 #define notifier_call_chain_empty() (rcu_dereference_raw(notifier_list.head) == NULL)
+#endif
 
 static void register_notifiers(void);
 static void unregister_notifiers(void);

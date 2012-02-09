@@ -672,9 +672,14 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 		struct hone_event *event, char *buf, unsigned int buflen)
 {
 	unsigned int n = 0;
-	struct timespec ts = timespec_add(event->ts, reader->start_time);
-	struct timestamp tstamp = timespec_to_tstamp(ts);
+	struct timespec ts;
+	struct timestamp tstamp;
 
+	// The following is used instead of timespec_add()
+	// because it doesn't exist in older kernel versions.
+	set_normalized_timespec(&ts, reader->start_time.tv_sec + event->ts.tv_sec,
+			reader->start_time.tv_nsec + event->ts.tv_nsec);
+	tstamp = timespec_to_tstamp(ts);
 	switch (event->type) {
 	case HONE_USER_HEAD:
 		n = get_sechdr_block(buf, buflen);
