@@ -36,6 +36,7 @@
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 #include <net/ipv6.h>
+#include <net/inet6_hashtables.h>
 #endif
 
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
@@ -254,8 +255,11 @@ static struct sock *lookup_v4_sock(const struct sk_buff *skb,
 }
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-// This prototype doesn't appear in include/net/ipv6.h in older kernels
-extern int ipv6_skip_exthdr(const struct sk_buff *, int , u8 *);
+#  if LINUX_VERSION_CODE >= KERNEL_VERSION(3,3,2)
+#    define SKIPHDR(...) ipv6_skip_exthdr(__VA_ARGS__, NULL)
+#  else
+#    define SKIPHDR ipv6_skip_exthdr
+#  endif
 
 static int extract_icmp6_fields(const struct sk_buff *skb,
 		unsigned int outside_hdrlen, int *protocol, struct in6_addr **raddr,
@@ -280,7 +284,7 @@ static int extract_icmp6_fields(const struct sk_buff *skb,
 		return 1;
 	inside_nexthdr = inside_iph->nexthdr;
 
-	inside_hdrlen = ipv6_skip_exthdr(skb, outside_hdrlen + sizeof(_icmph) + sizeof(_inside_iph), &inside_nexthdr);
+	inside_hdrlen = SKIPHDR(skb, outside_hdrlen + sizeof(_icmph) + sizeof(_inside_iph), &inside_nexthdr);
 	if (inside_hdrlen < 0)
 		return 1; /* hjm: Packet has no/incomplete transport layer headers. */
 
@@ -364,26 +368,7 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 	return nexthdr;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
-extern struct sock *inet6_lookup(struct net *net, struct inet_hashinfo *hashinfo,
-				 const struct in6_addr *saddr, const __be16 sport,
-				 const struct in6_addr *daddr, const __be16 dport,
-				 const int dif);
-
-extern struct sock *inet6_lookup_listener(struct net *net,
-					  struct inet_hashinfo *hashinfo,
-					  const struct in6_addr *daddr,
-					  const unsigned short hnum,
-					  const int dif);
-
-extern struct sock *__inet6_lookup_established(struct net *net,
-					   struct inet_hashinfo *hashinfo,
-					   const struct in6_addr *saddr,
-					   const __be16 sport,
-					   const struct in6_addr *daddr,
-					   const u16 hnum,
-					   const int dif);
-
+#  if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
 extern struct sock *__udp6_lib_lookup(struct net *net,
 				      struct in6_addr *saddr, __be16 sport,
 				      struct in6_addr *daddr, __be16 dport,
@@ -457,7 +442,7 @@ nf_tproxy_get_sock_v6(struct net *net, const u8 protocol,
 
 	return sk;
 }
-#endif
+#  endif
 
 static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 			const struct net_device *indev)
