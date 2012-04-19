@@ -1,0 +1,226 @@
+Hone Augmented PCAP Next Generation Dump File Format
+
+Table of Contents
+
+    1. Introduction
+    2. Section Information
+    3. Process Information
+        3.1. Process Event Block
+    4. Connection Information (Optional)
+        4.1. Connection Event Block
+    5. Packet Information
+    6. References
+
+
+1. Introduction
+
+The PCAP format has become the standard format for dumping captured packets in
+the free and open-source software community. Hone strives to adhere to this
+format as much as possible to help achieve acceptance within the networking
+community and to allow interoperability with other software. The original PCAP
+format, however, is deficient in describing anything except packets. Luckily,
+there is a new PCAP format, PCAP-NG (PCAP Next Generation), on the horizon with
+initial support in libpcap, wireshark, and other analysis software.
+
+PCAP-NG allows for nearly any type of data to be dumped, in addition to
+packets, using a generic block format. Applications that lack support for a
+particular block type may just ignore it and continue processing blocks they do
+support. This provides an opportunity to utilize this new format to include
+process information along with packets while remaining compatible with
+applications that are lacking process support.
+
+There are a minimum of two pieces of data that must be captured to perform
+packet-process correlation and a third that while optional provides additional
+information and simplifies the capture in the Linux kernel. The most obvious
+data that must be captured is the packet data. This data is already well
+defined but requires an additional piece of information to correlate packets:
+the process identifier. This leads to the second piece of data we must collect:
+process information. The third and optional piece is connection information.
+While collecting connection information doesn't necessarily help correlate
+packets to processes, it does give additional information that may be
+impossible to glean from the packet data, such as determining when a socket was
+created and destroyed.
+
+Below is a description of how the PCAP-NG format is extended to support the
+data required by Hone. Please see the PCAP-NG draft specification [1] for more
+information as the sections below build on ideas and terminology from that
+document.
+
+An HTML version of this document is available on GitHub [2] and will likely be
+more up-to-date.
+
+
+2. Section Information
+
+Hone utilizes the Section Header Block defined in section 3.1 [1] with the
+addition of Hone-specific options. In addition to the options defined in
+section 3.1 [1] (Section Header Block Options), the following options are valid
+within this block:
+
+ +======+==========+==========================================================+
+ | Code |  Length  | Description                                              |
+ +======+==========+==========================================================+
+ |  257 |    16    | GUID which uniquely identifies the machine.              |
+ +------+----------+----------------------------------------------------------+
+
+
+3. Process Information
+
+Process information requires a new PCAP-NG block type as defined below.
+
+
+3.1. Process Event Block
+
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +---------------------------------------------------------------+
+  0 |                    Block Type = 0x00000101                    |
+    +---------------------------------------------------------------+
+  4 |                      Block Total Length                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  8 |                          Process ID                           |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 12 |                        Timestamp (High)                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 16 |                        Timestamp (Low)                        |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /                                                               /
+    /                      Options (variable)                       /
+    /                                                               /
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                      Block Total Length                       |
+    +---------------------------------------------------------------+
+
+The meaning of the fields is:
+
+  * Block Type: the block type of the Process Event Block is 257.
+  * Block Total Length: total size of this block, as described in section 2.1
+    [1] (General Block Structure).
+  * Process ID: the process ID (PID) as given by the OS.
+  * Timestamp (High) and Timestamp (Low): high and low 32-bits of a 64-bit
+    quantity representing the timestamp, as described in section 3.3 [1]
+    (Enhanced Packet Block).
+  * Options: optionally, a list of options (formatted according to the rules
+    defined in section 2.5 [1] (Options)) can be present.
+
+In addition to the options defined in section 2.5 [1] (Options), the following
+options are valid within this block:
+
+ +======+==========+======================================+===================+
+ | Code |  Length  | Description                          | Example(s)        |
+ +======+==========+======================================+===================+
+ |   2  |     4    | A value describing the state of the  |                   |
+ |      |          | process: see below                   |                   |
+ +------+----------+--------------------------------------+-------------------+
+ |   3  | Variable | A UTF-8 string containing the full   |                   |
+ |      |          | path to the executable.              | "/usr/bin/bash"   |
+ +------+----------+--------------------------------------+-------------------+
+ |   4  | Variable | Zero terminated UTF-8 strings        |                   |
+ |      |          | containing the argv components.      | "bash\0--login\0" |
+ +------+----------+--------------------------------------+-------------------+
+ |   5  |     4    | Process ID (PID) of parent.          | 1                 |
+ +------+----------+--------------------------------------+-------------------+
+ |   6  |     4    | Effective user ID.                   | 1000              |
+ +------+----------+--------------------------------------+-------------------+
+ |   7  |     4    | Effective group ID.                  | 100               |
+ +------+----------+--------------------------------------+-------------------+
+ |   8  | Variable | Effective user name.                 | "jdoe"            |
+ +------+----------+--------------------------------------+-------------------+
+ |   9  | Variable | Effective group name.                | "users"           |
+ +------+----------+--------------------------------------+-------------------+
+
+If the proc_event option is not included, it is considered to be equal to start
+(0x00).
+
+Some systems may allow paths and command-line parameters to exceed 65536
+characters. Those options (proc_path and proc_argv) may be used multiple times
+within the same block with the value spread across multiple entries of the same
+option type which, when read, should be concatenated to form the actual option
+value.
+
+List of proc_event values:
+
+  * 0x00000000 - process started (includes exec and post-CreateProcess)
+  * 0x00000001 - child process spawned (includes fork and CreateProcess)
+  * 0xFFFFFFFF - process ended
+
+
+4. Connection Information (Optional)
+
+Connection information requires a new PCAP-NG block type as defined below.
+
+
+4.1. Connection Event Block
+
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +---------------------------------------------------------------+
+  0 |                    Block Type = 0x00000102                    |
+    +---------------------------------------------------------------+
+  4 |                      Block Total Length                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  8 |                        Connection ID                          |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 12 |                          Process ID                           |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 16 |                        Timestamp (High)                       |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 20 |                        Timestamp (Low)                        |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /                                                               /
+    /                      Options (variable)                       /
+    /                                                               /
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                      Block Total Length                       |
+    +---------------------------------------------------------------+
+
+The meaning of the fields is:
+
+  * Block Type: the block type of the Connection Event Block is 258.  Block
+  * Total Length: total size of this block, as described in section 2.1 [1]
+    (General Block Structure).
+  * Connection ID: the connection ID of the
+    connection. This ID is unique only over the lifetime of the connection.
+  * Process ID: the process ID (PID) of the process.  Timestamp (High) and
+  * Timestamp (Low): high and low 32-bits of a 64-bit quantity representing the
+    timestamp, as described in section 3.3 [1] (Enhanced Packet Block).
+  * Options: optionally, a list of options (formatted according to the rules
+    defined in section 2.5 [1] (Options)) can be present.
+
+In addition to the options defined in section 2.5 [1] (Options), the following
+options are valid within this block:
+
+ +======+==========+==========================================================+
+ | Code |  Length  | Description                                              |
+ +======+==========+==========================================================+
+ |   2  |     4    | Value describing the event: 0x00 = open,                 |
+ |      |          | 0xFFFFFFFF = close (others?).                            |
+ +------+----------+----------------------------------------------------------+
+
+If conn_event is not specified, it is assumed to be open (0x00).
+
+
+5. Packet Information
+
+Packet information utilizes the Enhanced Packet Block defined in section 3.3
+[1] with the addition of Hone-specific options. In addition to the options
+defined in section 3.3 [1] (Enhanced Packet Block Options), the following
+options are valid within this block:
+
+ +======+==========+==========================================================+
+ | Code |  Length  | Description                                              |
+ +======+==========+==========================================================+
+ |  257 |     4    | Connection ID of connection associated with the packet.  |
+ +------+----------+----------------------------------------------------------+
+ |  258 |     4    | Process ID of process associated with the packet.        |
+ +------+----------+----------------------------------------------------------+
+
+
+6. References
+
+  [1] PCAP Next Generation Dump File Format.
+      http://www.winpcap.org/ntar/draft/PCAP-DumpFileFormat.html
+
+  [2] Hone Augmented PCAP Next Generation Dump File Format
+		https://github.com/HoneProject/Linux-Sensor/wiki/Augmented-PCAP-Next-Generation-Dump-File-Format
+
