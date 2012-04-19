@@ -1,0 +1,47 @@
+_gitname=hone-sensor
+pkgname=$_gitname-git
+pkgver=20120419
+pkgrel=1
+pkgdesc="Hone device driver for correlating captured packets to processes"
+arch=(i686 x86_64)
+url="https://github.com/HoneProject/Linux-Sensor"
+license=('GPL')
+makedepends=('linux' 'linux-headers')
+options=('!strip')
+install="$pkgname.install"
+source=("$pkgname.install")
+md5sums=('520ca7c90814da9498a9e4c9b7178903')
+
+_gitroot="https://github.com/HoneProject/Linux-Sensor.git"
+
+build() {
+  cd "$srcdir"
+  msg "Connecting to GIT server...."
+
+  if [[ -d "$_gitname" ]]; then
+    cd "$_gitname" && git pull origin
+    msg "The local files are updated."
+  else
+    git clone "$_gitroot" "$_gitname"
+  fi
+
+  msg "GIT checkout done or server timeout"
+  msg "Starting build..."
+
+  rm -rf "$srcdir/$_gitname-build"
+  git clone "$srcdir/$_gitname" "$srcdir/$_gitname-build"
+  cd "$srcdir/$_gitname-build/src"
+
+  #
+  # BUILD HERE
+  #
+  nm /lib/modules/`uname -r`/build/vmlinux > System.map
+  make SYSMAP="$PWD/System.map"
+}
+
+package() {
+  cd "$srcdir/$_gitname-build/src"
+  make INSTALL_MOD_PATH="$pkgdir/" modules_install
+}
+
+# vim:set ts=2 sw=2 et:
