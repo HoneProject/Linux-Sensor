@@ -26,7 +26,7 @@
 
 #include "socket_notify.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33)
 #define DECLARE_CREATE_HOOK(NAME) int NAME(struct net *net, struct socket *sock, int protocol, int kern) 
 #define CALL_CREATE_HOOK(NAME) NAME(net, sock, protocol, kern)
 #else
