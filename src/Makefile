@@ -63,16 +63,16 @@ prereq_check:
 	  fi
 
 help:
-	make -C $(KSRC) M=$(CURDIR) help
+	$(MAKE) -C $(KSRC) M=$(CURDIR) help
 
 modules:
-	make -C $(KSRC) M=$(CURDIR) modules
+	$(MAKE) -C $(KSRC) M=$(CURDIR) modules
 
 modules_install install:
-	make -C $(KSRC) M=$(CURDIR) modules_install
+	$(MAKE) -C $(KSRC) M=$(CURDIR) modules_install
 
 clean:
-	make -C $(KSRC) M=$(CURDIR) clean
+	$(MAKE) -C $(KSRC) M=$(CURDIR) clean
 #	rm -f $(clean-files)
 
 snapshot-changelog:
