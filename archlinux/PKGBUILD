@@ -6,11 +6,11 @@ pkgdesc="Hone device driver for correlating captured packets to processes"
 arch=(i686 x86_64)
 url="https://github.com/HoneProject/Linux-Sensor"
 license=('GPL')
-makedepends=('linux' 'linux-headers')
 options=('!strip')
 install="$pkgname.install"
 source=("$pkgname.install")
-md5sums=('520ca7c90814da9498a9e4c9b7178903')
+md5sums=('baed13cb800dd802a3fc2035afb581d8')
+
 
 _gitroot="https://github.com/HoneProject/Linux-Sensor.git"
 
