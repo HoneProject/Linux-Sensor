@@ -1,8 +1,12 @@
 post_install() {
-  depmod -a `uname -r`
+  depmod -a
 }
 
 post_upgrade() {
+  post_install
+}
+
+post_remove() {
   post_install
 }
 
