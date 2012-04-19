@@ -37,6 +37,12 @@
 static RAW_NOTIFIER_HEAD(notifier_list);
 static DEFINE_RWLOCK(notifier_lock);
 
+#ifndef rcu_dereference_raw
+#define notifier_call_chain_empty() (rcu_dereference(notifier_list.head) == NULL)
+#else
+#define notifier_call_chain_empty() (rcu_dereference_raw(notifier_list.head) == NULL)
+#endif
+
 static DECLARE_CREATE_HOOK(inet_create_hook);
 extern const struct net_proto_family inet_family_ops;
 static const struct net_proto_family hooked_inet_family_ops = {
@@ -91,16 +97,20 @@ static inline int sock_notifier_notify(unsigned long event, struct sock *sk)
 void inet_sock_destruct_hook(struct sock *sk)
 {
 	sock_notifier_notify(0xFFFFFFFF, sk);
+	sk->sk_destruct = inet_sock_destruct;
 	inet_sock_destruct(sk);
+	module_put(THIS_MODULE);
 }
 
 static DECLARE_CREATE_HOOK(inet_create_hook)
 {
 	int err;
 
-	if ((err = CALL_CREATE_HOOK(inet_family_ops.create)))
+	if ((err = CALL_CREATE_HOOK(inet_family_ops.create)) ||
+			notifier_call_chain_empty())
 		return err;
 	BUG_ON(unlikely(sock->sk->sk_destruct != inet_sock_destruct));
+	__module_get(THIS_MODULE);
 	sock->sk->sk_destruct = inet_sock_destruct_hook;
 	sock_notifier_notify(0, sock->sk);
 	return err;
@@ -111,9 +121,11 @@ static DECLARE_CREATE_HOOK(inet6_create_hook)
 {
 	int err;
 
-	if ((err = CALL_CREATE_HOOK(inet6_family_ops.create)))
+	if ((err = CALL_CREATE_HOOK(inet6_family_ops.create)) ||
+			notifier_call_chain_empty())
 		return err;
 	BUG_ON(unlikely(sock->sk->sk_destruct != inet_sock_destruct));
+	__module_get(THIS_MODULE);
 	sock->sk->sk_destruct = inet_sock_destruct_hook;
 	sock_notifier_notify(0, sock->sk);
 	return err;
