@@ -19,6 +19,10 @@
 #include <linux/kprobes.h>
 #include <linux/notifier.h>
 
+#if !defined(CONFIG_KPROBES) || !defined(CONFIG_KRETPROBES)
+#error process_notify module requires kprobes support (CONFIG_KPROBES and CONFIG_KRETPROBES)
+#endif
+
 #include "process_notify.h"
 
 static RAW_NOTIFIER_HEAD(notifier_list);
@@ -77,23 +81,32 @@ static int exit_handler(struct kprobe *kp, struct pt_regs *regs)
 	return 0;
 }
 
+extern void copy_process(void);
+extern void compat_do_execve(void);
+
 static struct kretprobe fork_kretprobe = {
-	.kp.symbol_name = "copy_process",
+	//.kp.symbol_name = "copy_process",
+	.kp.addr = (kprobe_opcode_t *) copy_process,
 	.handler = fork_handler,
 };
 
 static struct kretprobe exec_kretprobe = {
-	.kp.symbol_name = "do_execve",
+	//.kp.symbol_name = "do_execve",
+	.kp.addr = (kprobe_opcode_t *) do_execve,
 	.handler = exec_handler,
 };
 
+#ifdef CONFIG_COMPAT
 static struct kretprobe compat_exec_kretprobe = {
-	.kp.symbol_name = "compat_do_execve",
+	//.kp.symbol_name = "compat_do_execve",
+	.kp.addr = (kprobe_opcode_t *) compat_do_execve,
 	.handler = exec_handler,
 };
+#endif
 
 static struct kprobe exit_kprobe = {
-	.symbol_name = "do_exit",
+	//.symbol_name = "do_exit",
+	.addr = (kprobe_opcode_t *) do_exit,
 	.pre_handler = exit_handler,
 };
 
@@ -116,16 +129,20 @@ int process_notify_init(void)
 				THIS_MODULE->name, err);
 		goto exec_failed;
 	}
+#ifdef CONFIG_COMPAT
 	if ((err = register_kretprobe(&compat_exec_kretprobe))) {
 		printk(KERN_ERR "%s: compat_exec register_kretprobe() failed with error %d\n",
 				THIS_MODULE->name, err);
 		if (err != -EINVAL)
 			goto compat_exec_failed;
 	}
+#endif
 	return 0;
 
+#ifdef CONFIG_COMPAT
 compat_exec_failed:
 	unregister_kretprobe(&exec_kretprobe);
+#endif
 exec_failed:
 	unregister_kretprobe(&fork_kretprobe);
 fork_failed:
@@ -136,7 +153,9 @@ exit_failed:
 
 void process_notify_remove(void)
 {
+#ifdef CONFIG_COMPAT
 	unregister_kretprobe(&compat_exec_kretprobe);
+#endif
 	unregister_kretprobe(&exec_kretprobe);
 	unregister_kretprobe(&fork_kretprobe);
 	unregister_kprobe(&exit_kprobe);

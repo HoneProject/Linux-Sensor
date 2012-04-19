@@ -29,6 +29,7 @@ obj-$(CONFIG_PACKET_NOTIFY) += packet_notify.o
 packet_notify-defsyms = __udp6_lib_lookup nf_tproxy_get_sock_v4
 
 obj-$(CONFIG_PROCESS_NOTIFY) += process_notify.o
+process_notify-defsyms = copy_process compat_do_execve do_execve
 
 obj-$(CONFIG_HONE_NOTIFY) += hone_notify.o
 
@@ -48,8 +49,9 @@ tarball-name := $(version-name).tar.gz
 KVER ?= $(shell uname -r)
 KSRC ?= /lib/modules/$(KVER)/build
 
-hone-source = dkms.conf.in dkms.conf Makefile defsyms.mk LICENSE README $(filter-out %.mod.c,$(wildcard *.[ch])) debian/* hone.spec.in hone.spec
-clean-files = dkms.conf hone.spec
+hone-source = Makefile defsyms.mk $(filter-out %.mod.c,$(wildcard *.[ch]))
+pkg-source = dkms.conf.in dkms.conf LICENSE README debian/* hone.spec.in hone.spec
+#clean-files = dkms.conf hone.spec
 pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//' || sed -r '2,$d;s/^.*\((.*)\).*$/\1/' debian/changelog)
 
 all: prereq_check modules
@@ -71,7 +73,7 @@ modules_install install:
 
 clean:
 	make -C $(KSRC) M=$(CURDIR) clean
-	rm -f $(clean-files)
+#	rm -f $(clean-files)
 
 snapshot-changelog:
 	@if [ "$(call pkg-version)" != "$(VERSION)" ]; then \
@@ -100,13 +102,13 @@ rpm: $(tarball-name)
 
 tarball: $(tarball-name)
 
-$(tarball-name): $(hone-source) snapshot-changelog
-	tar czf $@ --transform 's@^@hone-$(VERSION)/@' --exclude .svn --exclude '.*.swp' $(hone-source)
+$(tarball-name): $(hone-source) $(pkg-source) snapshot-changelog
+	tar czf $@ --transform 's@^@hone-$(VERSION)/@' --exclude .svn --exclude '.*.swp' $(hone-source) $(pkg-source)
 
-hone.spec: hone.spec.in
+hone.spec: hone.spec.in $(hone-source)
 	sed -r 's/^(Version: ).*$$/\1$(VERSION)/' $< > $@
 
-dkms.conf: dkms.conf.in
+dkms.conf: dkms.conf.in $(hone-source)
 	sed -r 's/^(PACKAGE_VERSION=).*$$/\1"$(VERSION)"/' $< > $@
 
 PHONY: all prereq_check help modules modules_install install clean \

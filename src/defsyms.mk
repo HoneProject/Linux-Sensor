@@ -25,11 +25,15 @@ ifneq ($(defsyms-names),)
 SYSMAP ?= $(or $(realpath $(CURDIR)/System.map), \
 	$(realpath /boot/System.map-$(KERNELRELEASE)), \
 	$(realpath /lib/modules/$(KERNELRELEASE)/build/System.map), \
-	$(if $(findstring $(KERNELRELEASE),$(shell uname -r)),$(realpath /proc/kallsyms)), \
-	$(src)/System.map)
+	$(realpath $(src)/System.map))
+SYSMAP := $(SYSMAP)
+
+# Hack to replace space character in cmd_defsyms
+SP :=
+SP +=
 
 quiet_cmd_defsyms = DEFSYMS $@
-cmd_defsyms = sed -r '/\s($(shell echo '$($*-defsyms)' | awk '{OFS="|";$$1=$$1;print $$0}'))\s*$$/!d;s/^(\S+)\s+\S+\s*(\S+)/\2 = 0x\1;/' $(SYSMAP) > $@
+cmd_defsyms = awk '$$3 ~ /^($(subst $(SP),|,$(strip $($*-defsyms))))(.part.[0-9]+)?$$/ {gsub(".part.[0-9]+$$", "", $$3); print $$3 " = 0x" $$1 ";"}' $(SYSMAP) > $@
 quiet_cmd_md5 = MD5SUM  $3
 cmd_md5 = md5sum $2 > $3
 quiet_cmd_symvers = SYMVERS $@
@@ -41,8 +45,13 @@ defsyms-m := $(addsuffix .ko,$(defsyms-roots))
 defsyms-lds := $(addsuffix .defsyms,$(defsyms-roots))
 clean-files += $(defsyms-m) $(defsyms-lds) .System.map.md5 defsyms.symvers
 
+ifeq ($(SYSMAP),)
+$(obj)/.System.map.md5: FORCE
+	$(error System.map not found.  Try setting the SYSMAP variable to the full path of System.map.  If needed, a System.map file can be generated using nm (e.g. nm /lib/modules/`uname -r`/build/vmlinux > System.map))
+else
 $(obj)/.System.map.md5: $(shell [ -f $(obj)/.System.map.md5 ] && md5sum $(SYSMAP) | cmp $(obj)/.System.map.md5 -s - || echo FORCE)
 	$(call cmd,md5,$(SYSMAP),$@)
+endif
 
 $(defsyms-obj): $(obj)/defsyms.symvers
 
