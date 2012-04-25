@@ -1,3 +1,13 @@
+--- a/src/defsyms.mk
++++ b/src/defsyms.mk
+@@ -62,6 +62,7 @@ KBUILD_EXTRA_SYMBOLS += $(obj)/defsyms.symvers
+ LDFLAGS_MODULE += $(DEFSYMS_LDFLAGS_$(notdir $@))
+ 
+ $(foreach N,$(defsyms-names),$(eval DEFSYMS_LDFLAGS_$(N).ko = -T $(obj)/$(N).defsyms))
++$(foreach N,$(defsyms-names),$(eval DEFSYMS_LDFLAGS_$(N).ko.unsigned = -T $(obj)/$(N).defsyms))
+ 
+ $(defsyms-lds): $(obj)/%.defsyms: $(obj)/.System.map.md5
+ 	$(call cmd,defsyms)
 --- a/src/socket_lookup.h
 +++ b/src/socket_lookup.h
 @@ -368,7 +368,7 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
@@ -11,9 +21,9 @@
  				      struct in6_addr *daddr, __be16 dport,
 --- a/src/socket_notify.c
 +++ b/src/socket_notify.c
-@@ -26,7 +26,7 @@
- 
- #include "socket_notify.h"
+@@ -31,7 +31,7 @@
+ #warning Hone will not provide IPv6 packet/process correlation.
+ #endif
  
 -#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33)
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
