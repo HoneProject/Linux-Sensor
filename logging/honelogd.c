@@ -32,14 +32,7 @@
 #include <getopt.h>
 #include <signal.h>
 
-#include <sys/user.h>
 #include <arpa/inet.h>
-#include <stropts.h>
-
-#include <linux/if.h>
-#include <linux/netdevice.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
 
 #include "honeevent.h"
 
