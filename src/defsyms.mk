@@ -14,7 +14,7 @@
 # GNU General Public License for more details.
 #
 
-defsyms-names = $(foreach N,$(basename $(obj-m)),$(if $($N-defsyms),$N))
+defsyms-names := $(foreach N,$(basename $(obj-m)),$(if $($N-defsyms),$N))
 
 ifneq ($(defsyms-names),)
 

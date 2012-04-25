@@ -26,6 +26,11 @@
 
 #include "socket_notify.h"
 
+#if !defined(CONFIG_IPV6) && defined(CONFIG_IPV6_MODULE)
+#warning Hone does not support IPv6 when it is built as a module.
+#warning Hone will not provide IPv6 packet/process correlation.
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33)
 #define DECLARE_CREATE_HOOK(NAME) int NAME(struct net *net, struct socket *sock, int protocol, int kern) 
 #define CALL_CREATE_HOOK(NAME) NAME(net, sock, protocol, kern)
@@ -51,7 +56,7 @@ static const struct net_proto_family hooked_inet_family_ops = {
 	.owner = THIS_MODULE,
 };
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IPV6)
 static DECLARE_CREATE_HOOK(inet6_create_hook);
 extern const struct net_proto_family inet6_family_ops;
 static const struct net_proto_family hooked_inet6_family_ops = {
@@ -116,7 +121,7 @@ static DECLARE_CREATE_HOOK(inet_create_hook)
 	return err;
 }
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IPV6)
 static DECLARE_CREATE_HOOK(inet6_create_hook)
 {
 	int err;
@@ -177,7 +182,7 @@ int socket_notify_init(void)
 
 	if ((err = install_hook("IPv4", &inet_family_ops, &hooked_inet_family_ops)))
 		return err;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IPV6)
 	if ((err = install_hook("IPv6", &inet6_family_ops, &hooked_inet6_family_ops))) {
 		sock_unregister(hooked_inet_family_ops.family);
 		reinstall_family("IPv4", &inet_family_ops);
@@ -189,7 +194,7 @@ int socket_notify_init(void)
 
 void socket_notify_remove(void)
 {
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IPV6)
 	sock_unregister(hooked_inet6_family_ops.family);
 	reinstall_family("IPv6", &inet6_family_ops);
 #endif
