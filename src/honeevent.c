@@ -793,7 +793,7 @@ static void __add_files(struct hone_reader *reader, struct task_struct *task)
 		int i = j * __NFDBITS;
 		if (i >= fdt->max_fds)
 			break;
-		for (set = fdt->open_fds->fds_bits[j]; set; set >>= 1, i++) {
+		for (set = fdt->open_fds[j]; set; set >>= 1, i++) {
 			if (!(set & 1))
 				continue;
 			file = fdt->fd[i];
