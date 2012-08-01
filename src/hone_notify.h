@@ -47,6 +47,7 @@ struct socket_event {
 struct packet_event {
 	unsigned long sock;
 	int dir;
+	pid_t pid;
 	struct sk_buff *skb;
 };
 
