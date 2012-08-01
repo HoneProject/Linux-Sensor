@@ -21,6 +21,8 @@
 #include <linux/cred.h>
 #include <linux/sched.h>
 
+#include <net/sock.h>
+
 #include "process_notify.h"
 #include "socket_notify.h"
 #include "packet_notify.h"
@@ -204,6 +206,7 @@ static int packet_event_handler(struct notifier_block *nb,
 	if ((event = alloc_hone_event(HONE_PACKET, GFP_ATOMIC))) {
 		struct packet_args *args = (typeof(args)) v;
 		event->packet.sock = (unsigned long) args->sk;
+		event->packet.pid = (unsigned long) (args->sk ? args->sk->sk_protinfo : 0);
 		event->packet.skb = skb_clone(args->skb, GFP_ATOMIC);
 		event->packet.dir = (val == PKTNOT_PACKET_IN);
 		hone_notifier_notify(event);

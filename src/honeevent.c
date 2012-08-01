@@ -232,8 +232,9 @@ static unsigned int format_as_text(struct hone_reader *reader,
 	{
 		struct iphdr _iph, *iph =
 				skb_header_pointer(event->packet.skb, 0, sizeof(_iph), &_iph);
-		printbuf("%lu.%09lu PAKT %c %08lx", event->ts.tv_sec, event->ts.tv_nsec,
-				event->packet.dir ? 'I' : 'O', event->packet.sock & 0xFFFFFFFF);
+		printbuf("%lu.%09lu PAKT %c %08lx %u", event->ts.tv_sec,
+				event->ts.tv_nsec, event->packet.dir ? 'I' : 'O',
+				event->packet.sock & 0xFFFFFFFF, event->packet.pid);
 		if (!iph)
 			printbuf(" ? ? -> ?");
 		else if (iph->version == 4) {
@@ -660,6 +661,9 @@ static size_t get_packet_block(struct packet_event *event,
 	// socket id
 	if (event->sock)  // Only add the option if we found a socket
 		pos += block_opt_t(pos, 257, uint32_t, event->sock & 0xFFFFFFFF);
+	// process id
+	if (event->pid)
+		pos += block_opt_t(pos, 258, uint32_t, event->pid);
 	pos += block_opt_t(pos, 2, uint32_t, event->dir ? 1 : 2);
 	pos += block_end_opt(pos);
 	length_end = (typeof(length_end)) pos;
