@@ -775,6 +775,12 @@ reader_alloc_failed:
 
 extern const struct file_operations socket_file_ops;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,4,0)
+#define OPEN_FDS open_fds
+#else
+#define OPEN_FDS open_fds->fds_bits
+#endif
+
 static void __add_files(struct hone_reader *reader, struct task_struct *task)
 {
 	struct ring_buf *ring = &reader->ringbuf;
@@ -794,10 +800,10 @@ static void __add_files(struct hone_reader *reader, struct task_struct *task)
 		goto out;
 	for (j = 0;; j++) {
 		unsigned long set;
-		int i = j * __NFDBITS;
+		int i = j * BITS_PER_LONG;
 		if (i >= fdt->max_fds)
 			break;
-		for (set = fdt->open_fds->fds_bits[j]; set; set >>= 1, i++) {
+		for (set = fdt->OPEN_FDS[j]; set; set >>= 1, i++) {
 			if (!(set & 1))
 				continue;
 			file = fdt->fd[i];
