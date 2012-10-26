@@ -41,8 +41,9 @@ include $(src)/defsyms.mk
 else
 
 SVNVER := $(shell svnversion 2>/dev/null | grep -o '^[0-9]\+[A-Z]\?')
+GITVER := $(shell git log -n 1 2>/dev/null | awk '/^commit/ {print substr($$2, 1, 7)}')
 MODVER := $(shell date +'%y.%m.%d')
-VERSION := $(MODVER)$(if $(SVNVER),+$(SVNVER))
+VERSION := $(MODVER)$(if $(SVNVER),+$(SVNVER),+$(GITVER))
 version-name := hone-$(VERSION)
 tarball-name := $(version-name).tar.gz
 
@@ -51,10 +52,16 @@ KSRC ?= /lib/modules/$(KVER)/build
 
 hone-source = Makefile defsyms.mk $(filter-out %.mod.c,$(wildcard *.[ch]))
 pkg-source = dkms.conf.in dkms.conf LICENSE README debian/* hone.spec.in hone.spec
-#clean-files = dkms.conf hone.spec
+clean-files = dkms.conf hone.spec
 pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//' || sed -r '2,$d;s/^.*\((.*)\).*$/\1/' debian/changelog)
 
 all: prereq_check modules
+
+tags: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
+	ctags $^
+
+TAGS: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
+	etags $^
 
 prereq_check:
 	@ if [ ! -f $(KSRC)/include/linux/version.h ]; then \
@@ -71,9 +78,12 @@ modules:
 modules_install install:
 	$(MAKE) -C $(KSRC) M=$(CURDIR) modules_install
 
-clean:
-	$(MAKE) -C $(KSRC) M=$(CURDIR) clean
-#	rm -f $(clean-files)
+distclean:
+	-rm -f *.[aos] *.ko .*.cmd *.mod.c Module.symvers modules.order
+	-rm -rf .tmp_versions
+
+clean: distclean
+	-rm -f $(clean-files)
 
 snapshot-changelog:
 	@if [ "$(call pkg-version)" != "$(VERSION)" ]; then \
@@ -111,7 +121,7 @@ hone.spec: hone.spec.in $(hone-source)
 dkms.conf: dkms.conf.in $(hone-source)
 	sed -r 's/^(PACKAGE_VERSION=).*$$/\1"$(VERSION)"/' $< > $@
 
-PHONY: all prereq_check help modules modules_install install clean \
+PHONY: all prereq_check help modules modules_install install clean distclean \
 	snapshot-changelog packages deb rpm tarball
 
 endif

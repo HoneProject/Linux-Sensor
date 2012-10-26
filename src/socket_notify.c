@@ -109,11 +109,14 @@ void inet_sock_destruct_hook(struct sock *sk)
 
 static inline void _finish_hook(struct sock *sk)
 {
+	if (notifier_call_chain_empty())
+		return;
 	BUG_ON(unlikely(sk->sk_destruct != inet_sock_destruct));
 	BUG_ON(unlikely(sk->sk_protinfo));
 	sk->sk_destruct = inet_sock_destruct_hook;
 	sk->sk_protinfo = (void *) (unsigned long)
 			(current->pid == current->tgid ? current->pid : current->tgid);
+	__module_get(THIS_MODULE);
 	sock_notifier_notify(0, sk);
 }
 
@@ -121,10 +124,8 @@ static DECLARE_CREATE_HOOK(inet_create_hook)
 {
 	int err;
 
-	if ((err = CALL_CREATE_HOOK(inet_family_ops.create)) ||
-			notifier_call_chain_empty())
-		return err;
-	_finish_hook(sock->sk);
+	if (!(err = CALL_CREATE_HOOK(inet_family_ops.create)))
+		_finish_hook(sock->sk);
 	return err;
 }
 
@@ -133,10 +134,8 @@ static DECLARE_CREATE_HOOK(inet6_create_hook)
 {
 	int err;
 
-	if ((err = CALL_CREATE_HOOK(inet6_family_ops.create)) ||
-			notifier_call_chain_empty())
-		return err;
-	_finish_hook(sock->sk);
+	if (!(err = CALL_CREATE_HOOK(inet6_family_ops.create)))
+		_finish_hook(sock->sk);
 	return err;
 }
 #endif
