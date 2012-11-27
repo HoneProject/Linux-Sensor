@@ -79,7 +79,8 @@ modules_install install:
 	$(MAKE) -C $(KSRC) M=$(CURDIR) modules_install
 
 distclean:
-	-rm -f *.[aos] *.ko .*.cmd *.mod.c Module.symvers modules.order
+	-rm -f *.[aos] *.ko .*.cmd *.mod.c *.defsyms .System.map.md5 \
+	       defsyms.symvers Module.symvers modules.order
 	-rm -rf .tmp_versions
 
 clean: distclean

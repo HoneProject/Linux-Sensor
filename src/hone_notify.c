@@ -94,9 +94,8 @@ struct hone_event *alloc_hone_event(unsigned int type, gfp_t flags)
 {
 	struct hone_event *event;
 	
-	if (!(event = kmem_cache_alloc(hone_cache, flags)))
+	if (!(event = kmem_cache_zalloc(hone_cache, flags)))
 		return NULL;
-	memset(event, 0, sizeof(*event));
 	event->type = type;
 	ktime_get_ts(&event->ts);
 	atomic_set(&event->users, 1);

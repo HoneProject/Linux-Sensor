@@ -19,8 +19,8 @@
 #include <linux/kprobes.h>
 #include <linux/notifier.h>
 
-#if !defined(CONFIG_KPROBES) || !defined(CONFIG_KRETPROBES)
-#error process_notify module requires kprobes support (CONFIG_KPROBES and CONFIG_KRETPROBES)
+#if !defined(CONFIG_KPROBES) || !defined(CONFIG_KRETPROBES) || !defined(CONFIG_KALLSYMS)
+#error process_notify module requires kprobes support (CONFIG_KPROBES, CONFIG_KRETPROBES and CONFIG_KALLSYMS)
 #endif
 
 #include "process_notify.h"

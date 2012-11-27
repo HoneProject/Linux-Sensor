@@ -21,6 +21,10 @@
 #include <linux/net.h>
 #include <linux/netfilter.h>
 
+#if !defined(CONFIG_KPROBES) || !defined(CONFIG_KALLSYMS)
+#error packet_notify module requires kprobes support (CONFIG_KPROBES and CONFIG_KALLSYMS)
+#endif
+
 #include "socket_lookup.h"
 #include "packet_notify.h"
 

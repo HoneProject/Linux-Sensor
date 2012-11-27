@@ -23,6 +23,7 @@
 #include <linux/ctype.h>
 #include <linux/skbuff.h>
 #include <linux/sched.h>
+#include <linux/stringify.h>
 #include <linux/poll.h>
 #include <linux/utsname.h>
 
@@ -50,7 +51,7 @@ MODULE_PARM_DESC(devname, "The name to give the device in sysfs (default: hone).
 static int major = 0;
 module_param(major, int, S_IRUGO);
 MODULE_PARM_DESC(major, "The major number to give the device.  "
-		"If 0 (the default), the major is automatically assigned by the kernel.");
+		"If 0 (the default), the major number is automatically assigned by the kernel.");
 
 static char *hostid = "";
 module_param(hostid, charp, S_IRUGO);
@@ -68,18 +69,17 @@ MODULE_PARM_DESC(snaplen, "The maximum length of packet data included in the "
 		"output.  If 0 (the default), do full packet capture.");
 
 #ifdef CONFIG_64BIT
-#define DEFAULT_PAGE_ORDER 2
-#define PAGE_ORDER_STR "2"
+#define DEFAULT_PAGE_ORDER 3
 #else
-#define DEFAULT_PAGE_ORDER 1
-#define PAGE_ORDER_STR "1"
+#define DEFAULT_PAGE_ORDER 2
 #endif
 
 static unsigned char pageorder = DEFAULT_PAGE_ORDER;
 module_param(pageorder, byte, S_IRUGO);
 MODULE_PARM_DESC(pageorder, "Specifies the page order to use when allocating "
-		"the ring buffer (default: " PAGE_ORDER_STR ").  The buffer size is "
-		"computed using the formula size = PAGE_SIZE * pow(2, pageorder).");
+		"the ring buffer (default: " __stringify(DEFAULT_PAGE_ORDER) ").  The "
+		"buffer size is computed using the formula size = PAGE_SIZE * pow(2, "
+		"pageorder).");
 
 static struct class *class_hone;
 
@@ -103,22 +103,24 @@ struct guid_struct {
 };
 
 struct ring_buf {
-	unsigned int front;
-	unsigned int back;
+	atomic_t front;
+	atomic_t back;
 	unsigned int length;
 	struct hone_event **data;
 };
 
-#define ring_unused(ring) ((ring)->length - ((ring)->back - (ring)->front))
-#define ring_is_empty(ring) ((ring)->front == (ring)->back)
+#define ring_front(ring) ((unsigned int) atomic_read(&(ring)->front))
+#define ring_back(ring) ((unsigned int) atomic_read(&(ring)->back))
+#define ring_add(ring, ctr, val) (atomic_add(val, &(ring)->ctr))
+#define ring_unused(ring) ((ring)->length - (ring_back(ring) - ring_front(ring)))
+#define ring_is_empty(ring) (ring_front(ring) == ring_back(ring))
 
 static int ring_append(struct ring_buf *ring, struct hone_event *event)
 {
 	if (!ring_unused(ring))
 		return -1;
-	ring->data[ring->back % ring->length] = event;
-	smp_wmb();
-	ring->back++;
+	ring->data[ring_back(ring) % ring->length] = event;
+	ring_add(ring, back, 1);
 	return 0;
 }
 
@@ -126,9 +128,8 @@ static int ring_prepend(struct ring_buf *ring, struct hone_event *event)
 {
 	if (!ring_unused(ring))
 		return -1;
-	ring->data[(ring->front - 1) % ring->length] = event;
-	smp_wmb();
-	ring->front--;
+	ring->data[(ring_front(ring) - 1) % ring->length] = event;
+	ring_add(ring, front, -1);
 	return 0;
 }
 
@@ -137,8 +138,8 @@ static int ring_pop(struct ring_buf *ring, struct hone_event **event)
 	if (ring_is_empty(ring))
 		return -1;
 	if (event)
-		*event = ring->data[ring->front % ring->length];
-	ring->front++;
+		*event = ring->data[ring_front(ring) % ring->length];
+	ring_add(ring, front, 1);
 	return 0;
 }
 
@@ -146,18 +147,18 @@ static struct hone_event *ring_peek(struct ring_buf *ring)
 {
 	if (ring_is_empty(ring))
 		return NULL;
-	return ring->data[ring->front % ring->length];
+	return ring->data[ring_front(ring) % ring->length];
 }
 
 static void ring_advance(struct ring_buf *ring)
 {
-	ring->front++;
+	ring_add(ring, front, 1);
 }
 
-#define pow2(order) ((order > 0) ? 2 << ((order) - 1) : 1)
+#define pow2(order) (1 << (order))
 #define size_of_pages(order) (PAGE_SIZE * pow2(order))
-#define READ_BUFFER_PAGEORDER 1
-#define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGEORDER)
+#define READ_BUFFER_PAGE_ORDER 5
+#define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGE_ORDER)
 
 struct hone_reader {
 	struct ring_buf ringbuf;
@@ -358,7 +359,7 @@ static inline struct timestamp timespec_to_tstamp(struct timespec ts)
 }
 
 /* Section Header Block {{{
-   0                   1                   2                   3
+  0                   1                   2                   3
    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +---------------------------------------------------------------+
  0 |                   Block Type = 0x0A0D0D0A                     |
@@ -380,7 +381,7 @@ static inline struct timestamp timespec_to_tstamp(struct timespec ts)
    |                      Block Total Length                       |
    +---------------------------------------------------------------+
 }}} */
-static unsigned int get_sechdr_block(char *buf, unsigned int buflen)
+static unsigned int format_sechdr_block(char *buf, unsigned int buflen)
 {
 	char *pos = buf;
 	unsigned int *length_top, *length_end;
@@ -449,7 +450,7 @@ static unsigned int get_sechdr_block(char *buf, unsigned int buflen)
    |                      Block Total Length                       |
    +---------------------------------------------------------------+
 }}} */	
-static unsigned int get_ifdesc_block(struct hone_reader *reader,
+static unsigned int format_ifdesc_block(struct hone_reader *reader,
 		char *buf, int buflen)
 {
 	static const char *if_desc = "Hone Capture Pseudo-device";
@@ -503,7 +504,7 @@ static inline unsigned int maxoptlen(int buflen, unsigned int length)
    |                      Block Total Length                       |
    +---------------------------------------------------------------+
 }}} */
-static size_t get_process_block(struct process_event *event,
+static size_t format_process_block(struct process_event *event,
 		struct timestamp *tstamp, char *buf, size_t buflen)
 {
 	char *pos = buf;
@@ -570,7 +571,7 @@ static size_t get_process_block(struct process_event *event,
    |                      Block Total Length                       |
    +---------------------------------------------------------------+
 }}} */
-static size_t get_connection_block(struct socket_event *event,
+static size_t format_connection_block(struct socket_event *event,
 		struct timestamp *tstamp, char *buf, size_t buflen)
 {
 	char *pos = buf;
@@ -598,7 +599,7 @@ static size_t get_connection_block(struct socket_event *event,
 }
 
 /* Enhanced Packet Block {{{
-      0                   1                   2                   3
+   0                   1                   2                   3
    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
    +---------------------------------------------------------------+
  0 |                    Block Type = 0x00000006                    |
@@ -627,7 +628,7 @@ static size_t get_connection_block(struct socket_event *event,
    |                      Block Total Length                       |
    +---------------------------------------------------------------+
 }}} */
-static size_t get_packet_block(struct packet_event *event,
+static size_t format_packet_block(struct packet_event *event,
 		struct timestamp *tstamp, char *buf, size_t buflen)
 {
 	char *pos = buf;
@@ -686,17 +687,17 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 	tstamp = timespec_to_tstamp(ts);
 	switch (event->type) {
 	case HONE_USER_HEAD:
-		n = get_sechdr_block(buf, buflen);
-		n += get_ifdesc_block(reader, buf + n, buflen - n);
+		n = format_sechdr_block(buf, buflen);
+		n += format_ifdesc_block(reader, buf + n, buflen - n);
 		break;
 	case HONE_PROCESS:
-		n = get_process_block(&event->process, &tstamp, buf, buflen);
+		n = format_process_block(&event->process, &tstamp, buf, buflen);
 		break;
 	case HONE_SOCKET:
-		n = get_connection_block(&event->socket, &tstamp, buf, buflen);
+		n = format_connection_block(&event->socket, &tstamp, buf, buflen);
 		break;
 	case HONE_PACKET:
-		n = get_packet_block(&event->packet, &tstamp, buf, buflen);
+		n = format_packet_block(&event->packet, &tstamp, buf, buflen);
 		break;
 	}
 
@@ -741,7 +742,7 @@ static int hone_event_handler(struct notifier_block *nb, unsigned long val, void
 static void free_hone_reader(struct hone_reader *reader)
 {
 	free_pages((unsigned long) reader->ringbuf.data, pageorder);
-	free_pages((unsigned long) reader->buf, READ_BUFFER_PAGEORDER);
+	free_pages((unsigned long) reader->buf, READ_BUFFER_PAGE_ORDER);
 	kfree(reader);
 }
 
@@ -752,7 +753,7 @@ static struct hone_reader *alloc_hone_reader(void)
 	if (!(reader = kzalloc(sizeof(*reader), GFP_KERNEL)))
 		goto reader_alloc_failed;
 	if (!(reader->buf = (typeof(reader->buf))
-				__get_free_pages(GFP_KERNEL, READ_BUFFER_PAGEORDER)))
+				__get_free_pages(GFP_KERNEL, READ_BUFFER_PAGE_ORDER)))
 		goto buffer_alloc_failed;
 	if (!(reader->ringbuf.data = (typeof(reader->ringbuf.data))
 				__get_free_pages(GFP_KERNEL, pageorder)))
@@ -765,7 +766,7 @@ static struct hone_reader *alloc_hone_reader(void)
 	return reader;
 
 ring_alloc_failed:
-	free_pages((unsigned long) reader->buf, READ_BUFFER_PAGEORDER);
+	free_pages((unsigned long) reader->buf, READ_BUFFER_PAGE_ORDER);
 buffer_alloc_failed:
 	free_hone_reader(reader);
 reader_alloc_failed:
@@ -818,7 +819,7 @@ static void __add_files(struct hone_reader *reader, struct task_struct *task)
 			if ((ring_prepend(ring, NULL)))
 				slot = NULL;
 			else
-				slot = &ring->data[ring->front % ring->length];
+				slot = &ring->data[ring_front(ring) % ring->length];
 			spin_unlock_irqrestore(&reader->ring_lock, flags);
 			if (!slot)
 				continue;   // XXX: increment missed process counter
@@ -861,7 +862,7 @@ static void add_current_tasks(struct hone_reader *reader)
 		if ((ring_prepend(ring, NULL)))
 			slot = NULL;
 		else
-			slot = &ring->data[ring->front % ring->length];
+			slot = &ring->data[ring_front(ring) % ring->length];
 		spin_unlock_irqrestore(&reader->ring_lock, flags);
 		if (!slot)
 			continue;   // XXX: increment missed process counter
@@ -968,7 +969,6 @@ try_sleep:
 				ring_advance(&reader->ringbuf);
 				put_hone_event(event);
 				add_initial_events(reader);
-				event = ring_peek(&reader->ringbuf);
 				return -EAGAIN;
 			}
 			ring_advance(&reader->ringbuf);
