@@ -288,19 +288,19 @@ restart:
 		}
 
 		if ((n = read(fd, buf, sizeof(buf))) == -1) {
-			if (errno == EAGAIN && restart_requested
-					&& ioctl(fd, HEIO_GET_AT_HEAD) > 0) {
-				log_msg(LOG_DEBUG, "Device restarted.\n");
-				if (done)
-					goto out;
-				log_msg(LOG_DEBUG, "Reopening log file.\n");
-				goto restart;
-			}
 			if (errno != EINTR && errno != EAGAIN) {
 				log_msg(LOG_ERR, "%s: read failure: %m\n", dev_path); 
 				goto out;
 			}
 			continue;
+		}
+
+		if (!n) {
+			log_msg(LOG_DEBUG, "Device restarted.\n");
+			if (done || ioctl(fd, HEIO_GET_AT_HEAD) <= 0)
+				goto out;
+			log_msg(LOG_DEBUG, "Reopening log file.\n");
+			goto restart;
 		}
 
 		while ((n -= fwrite(buf, 1, n, log_file))) {

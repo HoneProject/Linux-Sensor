@@ -969,7 +969,7 @@ try_sleep:
 				ring_advance(&reader->ringbuf);
 				put_hone_event(event);
 				add_initial_events(reader);
-				return -EAGAIN;
+				return 0;
 			}
 			ring_advance(&reader->ringbuf);
 			reader->buflen = reader->format(reader,
