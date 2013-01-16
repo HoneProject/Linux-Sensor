@@ -20,5 +20,7 @@
 #define HEIO_RESTART _IO(0xE0, 0x01)
 #define HEIO_MARK_RESTART _IO(0xE0, 0x02)
 #define HEIO_GET_AT_HEAD _IO(0xE0, 0x03)
+#define HEIO_GET_SNAPLEN _IOR(0xE0, 0x04, int)
+#define HEIO_SET_SNAPLEN _IOW(0xE0, 0x05, int)
 
 #endif /* _HONEEVENT_H */

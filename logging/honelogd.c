@@ -22,6 +22,7 @@
 #include <sys/ioctl.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -165,8 +166,9 @@ static void print_help(void)
 "  -a, --append           append new records to log file instead of overwriting\n"
 "  -b, --background       background (daemonize) process after starting\n"
 "  -e, --event-file=FILE  read events from FILE [%s]\n"
-"  -l, --log-file=FILE    write events to FILE [%s]\n"
+"  -f, --log-file=FILE    write events to FILE [%s]\n"
 "  -p, --pid-file=FILE    write the process ID to FILE [%s]\n"
+"  -s, --snaplen=LENGTH   set the maximum packet capture size to LENGTH\n"
 "  -h, --help             display this help and exit\n"
 	, exe_name, DEV_PATH, LOG_PATH, PID_PATH);
 }
@@ -174,6 +176,7 @@ static void print_help(void)
 int main(int argc, char *argv[])
 {
 	int rc, n, restart_requested, fd = -1, background = 0;
+	unsigned int snaplen = 0;
 	char *dev_path = DEV_PATH, *pid_path = PID_PATH;
 	FILE *log_file = NULL;
 	char *mode = "w";
@@ -192,12 +195,13 @@ int main(int argc, char *argv[])
 			{"background", no_argument, 0, 'b'},
 			{"event-file", required_argument, 0, 'e'},
 			{"help", no_argument, 0, 'h'},
-			{"log-file", required_argument, 0, 'l'},
+			{"log-file", required_argument, 0, 'f'},
 			{"pid-file", required_argument, 0, 'p'},
+			{"snaplen", required_argument, 0, 's'},
 		};
 		int c, option_index;
 
-		c = getopt_long(argc, argv, "abe:hl:p:", long_options, &option_index);
+		c = getopt_long(argc, argv, "abe:f:hp:s:", long_options, &option_index);
 		if (c == -1)
 			break;
 
@@ -211,18 +215,30 @@ int main(int argc, char *argv[])
 			case 'e':
 				dev_path = optarg;
 				break;
+			case 'f':
+				log_path = optarg;
+				break;
 			case 'h':
 				print_help();
 				exit(EXIT_FAILURE);
-			case 'l':
-				log_path = optarg;
-				break;
 			case '?':
 				print_tip();
 				exit(EXIT_FAILURE);
 			case 'p':
 				pid_path = optarg;
 				break;
+			case 's':
+			{
+				unsigned long tmp;
+				char *end;
+				tmp = strtoul(optarg, &end, 10);
+				if (!*optarg || *end || (tmp > UINT32_MAX && tmp != -1)) {
+					fprintf(stderr, "%s: invalid snaplen: %s\n", exe_name, optarg);
+					exit(EXIT_FAILURE);
+				}
+				snaplen = tmp == -1 ? UINT32_MAX : (unsigned int) tmp;
+				break;
+			}
 			default:
 				fprintf(stderr, "invalid option -- %c\n", c);
 				print_tip();
@@ -259,6 +275,10 @@ int main(int argc, char *argv[])
 	fd = open(dev_path, O_RDONLY, 0);
 	if (fd == -1) {
 		log_msg(LOG_ERR, "%s: open() failed: %m:\n", dev_path);
+		exit(EXIT_FAILURE);
+	}
+	if (snaplen && ioctl(fd, HEIO_SET_SNAPLEN, &snaplen) == -1) {
+		log_msg(LOG_ERR, "ioctl() failed: %m\n");
 		exit(EXIT_FAILURE);
 	}
 

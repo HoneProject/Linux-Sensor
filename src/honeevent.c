@@ -63,11 +63,6 @@ module_param(comment, charp, S_IRUGO);
 MODULE_PARM_DESC(comment, "If given, will be included in the comment option "
 		"of the section header block.  Spaces can be encoded as \\040 or \\x20.");
 
-static unsigned int snaplen = 0;
-module_param(snaplen, uint, S_IRUGO);
-MODULE_PARM_DESC(snaplen, "The maximum length of packet data included in the "
-		"output.  If 0 (the default), do full packet capture.");
-
 #ifdef CONFIG_64BIT
 #define DEFAULT_PAGE_ORDER 3
 #else
@@ -168,6 +163,7 @@ struct hone_reader {
 	unsigned int (*format)(struct hone_reader *,
 			struct hone_event *, char *, unsigned int);
 	unsigned int flags;
+	unsigned int snaplen;
 	unsigned int buflen;
 	char *buf;
 };
@@ -341,6 +337,7 @@ static unsigned int block_opt_ptr(char *buf,
 		TYPE _value = (VAL); \
 		unsigned int _length = block_opt_ptr(BUF, CODE, &_value, sizeof(_value)); \
 		_length; })
+#define block_opt(BUF, CODE, VAL) block_opt_t(BUF, CODE, typeof(VAL), VAL)
 #define block_end_opt(BUF) block_opt_ptr(BUF, 0, NULL, 0)
 
 struct timestamp {
@@ -399,7 +396,7 @@ static unsigned int format_sechdr_block(char *buf, unsigned int buflen)
 	pos += block_set(pos, uint16_t, 0);           // minor version
 	pos += block_set(pos, uint64_t, -1);          // section length
 	if (host_guid_set)
-		pos += block_opt_t(pos, 257, struct guid_struct, host_guid);
+		pos += block_opt(pos, 257, host_guid);
 	if ((n = buflen - (pos - buf) - 16) > 0) {
 		struct new_utsname *uname;
 		down_read(&uts_sem);
@@ -466,7 +463,7 @@ static unsigned int format_ifdesc_block(struct hone_reader *reader,
 	pos += block_set(pos, uint32_t, 0);    // block length
 	pos += block_set(pos, uint16_t, 101);  // link type
 	pos += block_set(pos, uint16_t, 0);    // reserved
-	pos += block_set(pos, uint32_t, snaplen);  // snaplen
+	pos += block_set(pos, uint32_t, reader->snaplen);  // snaplen
 	pos += block_opt_ptr(pos, 3, if_desc, strlen(if_desc));  // if_description
 	pos += block_end_opt(pos);
 	length_end = (typeof(length_end)) pos;
@@ -629,7 +626,7 @@ static size_t format_connection_block(struct socket_event *event,
    +---------------------------------------------------------------+
 }}} */
 static size_t format_packet_block(struct packet_event *event,
-		struct timestamp *tstamp, char *buf, size_t buflen)
+		unsigned int snaplen, struct timestamp *tstamp, char *buf, size_t buflen)
 {
 	char *pos = buf;
 	unsigned int *length_top, *length_end, *length_cap;
@@ -697,7 +694,8 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 		n = format_connection_block(&event->socket, &tstamp, buf, buflen);
 		break;
 	case HONE_PACKET:
-		n = format_packet_block(&event->packet, &tstamp, buf, buflen);
+		n = format_packet_block(
+				&event->packet, reader->snaplen, &tstamp, buf, buflen);
 		break;
 	}
 
@@ -1006,31 +1004,35 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 		return -EINVAL;
 
 	switch (num) {
-		case HEIO_RESTART:
-			add_initial_events(reader);
-			return 0;
-		case HEIO_MARK_RESTART:
-		{
-			struct hone_event *event = NULL;
-			unsigned long flags;
+	case HEIO_RESTART:
+		add_initial_events(reader);
+		return 0;
+	case HEIO_MARK_RESTART:
+	{
+		struct hone_event *event = NULL;
+		unsigned long flags;
 
-			spin_lock_irqsave(&reader->ring_lock, flags);
-			if (!ring_unused(&reader->ringbuf))
-				ring_pop(&reader->ringbuf, &event);
-			if (!ring_prepend(&reader->ringbuf, &restart_event))
-				get_hone_event(&restart_event);
-			// XXX: else increment appropriate missed event counter
-			spin_unlock_irqrestore(&reader->ring_lock, flags);
-			if (event)
-				put_hone_event(event);   // XXX: increment missed event counter
-			//add_initial_events(reader);
-			return 0;
-		}
-		case HEIO_GET_AT_HEAD:
-		{
-			struct hone_event *event = ring_peek(&reader->ringbuf);
-			return event == &head_event ? 1 : 0;
-		}
+		spin_lock_irqsave(&reader->ring_lock, flags);
+		if (!ring_unused(&reader->ringbuf))
+			ring_pop(&reader->ringbuf, &event);
+		if (!ring_prepend(&reader->ringbuf, &restart_event))
+			get_hone_event(&restart_event);
+		// XXX: else increment appropriate missed event counter
+		spin_unlock_irqrestore(&reader->ring_lock, flags);
+		if (event)
+			put_hone_event(event);   // XXX: increment missed event counter
+		//add_initial_events(reader);
+		return 0;
+	}
+	case HEIO_GET_AT_HEAD:
+	{
+		struct hone_event *event = ring_peek(&reader->ringbuf);
+		return event == &head_event ? 1 : 0;
+	}
+	case HEIO_GET_SNAPLEN:
+		return put_user(reader->snaplen, (unsigned int __user *) param);
+	case HEIO_SET_SNAPLEN:
+		return get_user(reader->snaplen, (unsigned int __user *) param);
 	}
 
 	return -EINVAL;
