@@ -1,0 +1,9 @@
+.*.cmd
+*.defsyms
+*.ko
+*.mod.c
+*.symvers
+.System.map.md5
+.tmp_versions
+System.map
+modules.order
