@@ -1006,6 +1006,8 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 	switch (num) {
 	case HEIO_RESTART:
 		add_initial_events(reader);
+		if (waitqueue_active(&event_wait_queue))
+			wake_up_interruptible_all(&event_wait_queue);
 		return 0;
 	case HEIO_MARK_RESTART:
 	{
@@ -1022,6 +1024,8 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 		if (event)
 			put_hone_event(event);   // XXX: increment missed event counter
 		//add_initial_events(reader);
+		if (waitqueue_active(&event_wait_queue))
+			wake_up_interruptible_all(&event_wait_queue);
 		return 0;
 	}
 	case HEIO_GET_AT_HEAD:
