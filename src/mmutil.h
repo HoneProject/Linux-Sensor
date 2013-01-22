@@ -29,26 +29,40 @@
 	#define D_PATH d_path
 #endif
 
-static char *__exe_path(struct mm_struct *mm, char *buf, int buflen)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+	#define __get_exe_file(mm) ((mm)->exe_file)
+#else
+static struct file *__get_exe_file(struct mm_struct *mm)
 {
 	struct vm_area_struct *vma;
-	struct vfsmount *mnt = NULL;
-	struct dentry *dentry = NULL;
-	char *path = NULL;
 
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
-		if ((vma->vm_flags & VM_EXECUTABLE) && vma->vm_file) {
-			mnt = mntget(vma->vm_file->f_vfsmnt);
-			dentry = dget(vma->vm_file->f_dentry);
-			break;
+		if ((vma->vm_flags & VM_EXECUTABLE) && vma->vm_file)
+			return vma->vm_file;
+	}
+	return NULL;
+}
+#endif
+
+static char *__exe_path(struct mm_struct *mm, char *buf, int buflen)
+{
+	struct file *exe_file;
+	char *path = NULL;
+
+	if ((exe_file = __get_exe_file(mm))) {
+		struct vfsmount *mnt;
+		struct dentry *dentry;
+
+		mnt = mntget(exe_file->f_vfsmnt);
+		dentry = dget(exe_file->f_dentry);
+
+		if (mnt && dentry) {
+			path = D_PATH(mnt, dentry, buf, buflen);
+			dput(dentry);
+			mntput(mnt);
 		}
 	}
 
-	if (mnt && dentry) {
-		path = D_PATH(mnt, dentry, buf, buflen);
-		dput(dentry);
-		mntput(mnt);
-	}
 	return path;
 }
 
