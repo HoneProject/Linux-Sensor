@@ -64,7 +64,8 @@ TAGS: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
 	etags $^
 
 prereq_check:
-	@ if [ ! -f $(KSRC)/include/linux/version.h ]; then \
+	@ if [ ! -f $(KSRC)/include/linux/version.h ] && \
+		  [ ! -f $(KSRC)/include/generated/uapi/linux/version.h ]; then \
 		echo "Kernel source was not found. Aborting."; \
 		exit 1; \
 	  fi
