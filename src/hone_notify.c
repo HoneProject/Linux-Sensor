@@ -99,8 +99,6 @@ struct hone_event *alloc_hone_event(unsigned int type, gfp_t flags)
 	event->type = type;
 	ktime_get_ts(&event->ts);
 	atomic_set(&event->users, 1);
-	if (type & HONE_USER)
-		event->user.destruct = free_hone_event;
 	return event;
 }
 

@@ -54,14 +54,16 @@ struct packet_event {
 struct hone_event;
 
 struct user_event {
-	void (*destruct)(struct hone_event *);
 	void *data;
 };
 
 struct hone_event {
 	int type;
+	union {
+		atomic_t users;
+		struct hone_event *next;
+	};
 	struct timespec ts;
-	atomic_t users;
 	union {
 		struct process_event process;
 		struct socket_event socket;
@@ -92,13 +94,8 @@ static inline void get_hone_event(struct hone_event *event)
 inline void put_hone_event(struct hone_event *event)
 {
 	BUG_ON(unlikely(!atomic_read(&event->users)));
-	if (atomic_dec_and_test(&event->users)) {
-		if (event->type & HONE_USER) {
-			if (event->user.destruct)
-				event->user.destruct(event);
-		} else
-			free_hone_event(event);
-	}
+	if (atomic_dec_and_test(&event->users))
+		free_hone_event(event);
 }
 
 

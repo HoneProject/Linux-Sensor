@@ -299,7 +299,7 @@ restart:
 
 	for (;;) {
 		if ((restart || done) && !restart_requested) {
-			if (ioctl(fd, HEIO_MARK_RESTART) == -1) {
+			if (ioctl(fd, HEIO_RESTART) == -1) {
 				log_msg(LOG_ERR, "ioctl() failed: %m\n");
 				exit(EXIT_FAILURE);
 			}

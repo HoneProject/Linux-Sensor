@@ -82,7 +82,6 @@ static struct class *class_hone;
 #define printm(level, fmt, ...) printk(level "%s: %s:%d: " fmt, mod_name, __FILE__, __LINE__, ##__VA_ARGS__)
 #define mod_name (THIS_MODULE->name)
 
-#define HONE_USER_RESTART (HONE_USER | 0)
 #define HONE_USER_HEAD (HONE_USER | 1)
 
 #define GUID_FMT "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x"
@@ -119,41 +118,25 @@ static int ring_append(struct ring_buf *ring, struct hone_event *event)
 	return 0;
 }
 
-static int ring_prepend(struct ring_buf *ring, struct hone_event *event)
+static struct hone_event *ring_pop(struct ring_buf *ring)
 {
-	if (!ring_unused(ring))
-		return -1;
-	ring->data[(ring_front(ring) - 1) % ring->length] = event;
-	ring_add(ring, front, -1);
-	return 0;
-}
+	struct hone_event *event;
 
-static int ring_pop(struct ring_buf *ring, struct hone_event **event)
-{
-	if (ring_is_empty(ring))
-		return -1;
-	if (event)
-		*event = ring->data[ring_front(ring) % ring->length];
-	ring_add(ring, front, 1);
-	return 0;
-}
-
-static struct hone_event *ring_peek(struct ring_buf *ring)
-{
 	if (ring_is_empty(ring))
 		return NULL;
-	return ring->data[ring_front(ring) % ring->length];
-}
-
-static void ring_advance(struct ring_buf *ring)
-{
+	event = ring->data[ring_front(ring) % ring->length];
 	ring_add(ring, front, 1);
+	return event;
 }
 
 #define pow2(order) (1 << (order))
 #define size_of_pages(order) (PAGE_SIZE * pow2(order))
 #define READ_BUFFER_PAGE_ORDER 5
 #define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGE_ORDER)
+
+#define READER_FINISH 0x00000001
+#define READER_INIT 0x00000002
+#define READER_RESTART 0x00000003
 
 struct hone_reader {
 	struct ring_buf ringbuf;
@@ -162,8 +145,9 @@ struct hone_reader {
 	struct timespec start_time;
 	unsigned int (*format)(struct hone_reader *,
 			struct hone_event *, char *, unsigned int);
-	unsigned int flags;
+	atomic_t flags;
 	unsigned int snaplen;
+	struct hone_event *event;
 	unsigned int buflen;
 	char *buf;
 };
@@ -171,15 +155,12 @@ struct hone_reader {
 static struct guid_struct host_guid;
 static bool host_guid_set = false;
 static DECLARE_WAIT_QUEUE_HEAD(event_wait_queue);
-static struct hone_event head_event = {
-	.type = HONE_USER_HEAD,
-	.users = ATOMIC_INIT(1),
-};
-static struct hone_event restart_event = {
-	.type = HONE_USER_RESTART,
-	.users = ATOMIC_INIT(1),
-};
 
+static struct hone_event head_event = {HONE_USER_HEAD, {ATOMIC_INIT(1)}};
+
+
+#define reader_will_block(rdr) (ring_is_empty(&(rdr)->ringbuf) && \
+		!((rdr)->event || (atomic_read(&(rdr)->flags) & READER_RESTART)))
 
 static unsigned int format_as_text(struct hone_reader *reader,
 		struct hone_event *event, char *buf, unsigned int buflen)
@@ -761,6 +742,7 @@ static struct hone_reader *alloc_hone_reader(void)
 	spin_lock_init(&reader->ring_lock);
 	//reader->format = format_as_text;
 	reader->format = format_as_pcapng;
+	atomic_set(&reader->flags, READER_INIT);
 	return reader;
 
 ring_alloc_failed:
@@ -780,32 +762,28 @@ extern const struct file_operations socket_file_ops;
 #define OPEN_FDS open_fds->fds_bits
 #endif
 
-static void __add_files(struct hone_reader *reader, struct task_struct *task)
+static struct hone_event *__add_files(
+		struct hone_event *event, struct task_struct *task)
 {
-	struct ring_buf *ring = &reader->ringbuf;
+	struct hone_event *sk_event;
 	struct files_struct *files;
 	struct file *file;
 	struct fdtable *fdt;
 	struct socket *sock;
 	struct sock *sk;
-	struct hone_event *event, **slot;
-	unsigned long flags, files_flags;
-	int j;
+	unsigned long flags, set;
+	int i, fd;
 	
 	if (!(files = get_files_struct(task)))
-		return;
-	spin_lock_irqsave(&files->file_lock, files_flags);
+		return event;
+	spin_lock_irqsave(&files->file_lock, flags);
 	if (!(fdt = files_fdtable(files)))
 		goto out;
-	for (j = 0;; j++) {
-		unsigned long set;
-		int i = j * BITS_PER_LONG;
-		if (i >= fdt->max_fds)
-			break;
-		for (set = fdt->OPEN_FDS[j]; set; set >>= 1, i++) {
+	for (i = 0; (fd = i * BITS_PER_LONG) < fdt->max_fds; i++) {
+		for (set = fdt->OPEN_FDS[i]; set; set >>= 1, fd++) {
 			if (!(set & 1))
 				continue;
-			file = fdt->fd[i];
+			file = fdt->fd[fd];
 			if (!file || file->f_op != &socket_file_ops || !file->private_data)
 				continue;
 			sock = file->private_data;
@@ -813,82 +791,65 @@ static void __add_files(struct hone_reader *reader, struct task_struct *task)
 			if (!sk || (sk->sk_family != PF_INET && sk->sk_family != PF_INET6))
 				continue;
 
-			spin_lock_irqsave(&reader->ring_lock, flags);
-			if ((ring_prepend(ring, NULL)))
-				slot = NULL;
-			else
-				slot = &ring->data[ring_front(ring) % ring->length];
-			spin_unlock_irqrestore(&reader->ring_lock, flags);
-			if (!slot)
-				continue;   // XXX: increment missed process counter
-			if (!(event = __alloc_socket_event((unsigned long) sk,
-					0, task, GFP_ATOMIC))) {
-				ring_pop(ring, NULL);
-				continue;  // XXX: increment missed connection counter
+			if ((sk_event = __alloc_socket_event((unsigned long) sk,
+							0, task, GFP_ATOMIC))) {
+				sk_event->next = event;
+				event = sk_event;
+				event->ts = task->start_time;
 			}
-			event->ts = task->start_time;
-			*slot = event;
+			// else
+			//   XXX: increment missed process counter
 		}
 	}
 out:
-	spin_unlock_irqrestore(&files->file_lock, files_flags);
+	spin_unlock_irqrestore(&files->file_lock, flags);
 	put_files_struct(files);
+	return event;
 }
 
 
 #define prev_task(p) \
 	list_entry_rcu((p)->tasks.prev, struct task_struct, tasks)
 
-static void add_current_tasks(struct hone_reader *reader)
+static struct hone_event *add_current_tasks(struct hone_event *event)
 {
-	struct ring_buf *ring = &reader->ringbuf;
-	struct hone_event *event, **slot;
+	struct hone_event *proc_event;
 	struct task_struct *task;
-	unsigned long flags;
-	int type;
 
 	rcu_read_lock();
 	for (task = &init_task; (task = prev_task(task)) != &init_task; ) {
 		if (task->flags & PF_EXITING)
 			continue;
-		else if (task->flags & PF_FORKNOEXEC)
-			type = PROC_FORK;
-		else
-			type = PROC_EXEC;
-		__add_files(reader, task);
-		spin_lock_irqsave(&reader->ring_lock, flags);
-		if ((ring_prepend(ring, NULL)))
-			slot = NULL;
-		else
-			slot = &ring->data[ring_front(ring) % ring->length];
-		spin_unlock_irqrestore(&reader->ring_lock, flags);
-		if (!slot)
-			continue;   // XXX: increment missed process counter
-		if (!(event = __alloc_process_event(task, type, GFP_ATOMIC))) {
-			ring_pop(ring, NULL);
-			continue;   // XXX: increment missed process counter
+		event = __add_files(event, task);
+		if ((proc_event = __alloc_process_event(task,
+						task->flags & PF_FORKNOEXEC ? PROC_FORK : PROC_EXEC,
+						GFP_ATOMIC))) {
+			proc_event->next = event;
+			event = proc_event;
+			event->ts = task->start_time;
 		}
-		event->ts = task->start_time;
-		*slot = event;
+		// else
+		//   XXX: increment missed process counter
 	}
 	rcu_read_unlock();
+	return event;
+}
+
+static void free_initial_events(struct hone_reader *reader)
+{
+	struct hone_event *event, *next;
+
+	for (event = reader->event; event; event = next) {
+		next = event->next;
+		free_hone_event(event);
+	}
+	reader->event = NULL;
 }
 
 static void add_initial_events(struct hone_reader *reader)
 {
-	struct hone_event *event = NULL;
-	unsigned long flags;
-
-	add_current_tasks(reader);
-	spin_lock_irqsave(&reader->ring_lock, flags);
-	if (!ring_unused(&reader->ringbuf))
-		ring_pop(&reader->ringbuf, &event);
-	if (!ring_prepend(&reader->ringbuf, &head_event))
-		get_hone_event(&head_event);
-	// XXX: else increment appropriate missed event counter
-	spin_unlock_irqrestore(&reader->ring_lock, flags);
-	if (event)
-		put_hone_event(event);   // XXX: increment missed event counter
+	free_initial_events(reader);
+	reader->event = add_current_tasks(NULL);
 }
 
 static int hone_open(struct inode *inode, struct file *file)
@@ -910,7 +871,6 @@ static int hone_open(struct inode *inode, struct file *file)
 		goto register_failed;
 	}
 	__module_get(THIS_MODULE);
-	add_initial_events(reader);
 	return 0;
 
 register_failed:
@@ -929,8 +889,9 @@ static int hone_release(struct inode *inode, struct file *file)
 
 	hone_notifier_unregister(&reader->nb);
 	file->private_data = NULL;
-	while (!(ring_pop(&reader->ringbuf, &event)))
+	while ((event = ring_pop(&reader->ringbuf)))
 		put_hone_event(event);
+	free_initial_events(reader);
 	free_hone_reader(reader);
 	module_put(THIS_MODULE);
 
@@ -947,32 +908,44 @@ static ssize_t hone_read(struct file *file, char __user *buffer,
 		return -EFAULT;
 
 try_sleep:
-	while (!*offset && ring_is_empty(&reader->ringbuf)) {
+	while (!*offset && reader_will_block(reader)) {
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		if (wait_event_interruptible(event_wait_queue,
-					!ring_is_empty(&reader->ringbuf)))
+					!reader_will_block(reader)))
 			return -EINTR;
 	}
 
 	while (copied < length) {
 		if (!(*offset)) {
-			struct hone_event *event = ring_peek(&reader->ringbuf);
+			struct hone_event *event;
+			void (*free_event)(struct hone_event *);
+
+			if (atomic_read(&reader->flags) & READER_FINISH) {
+				if (copied)
+					return copied;
+				atomic_clear_mask(READER_FINISH, &reader->flags);
+				return 0;
+			} else if (atomic_read(&reader->flags) & READER_INIT) {
+				atomic_clear_mask(READER_INIT, &reader->flags);
+				add_initial_events(reader);
+				event = &head_event;
+				free_event = NULL;
+			} else if (reader->event) {
+				if ((event = reader->event))
+					reader->event = event->next;
+				free_event = free_hone_event;
+			} else {
+				event = ring_pop(&reader->ringbuf);
+				free_event = put_hone_event;
+			}
 
 			if (!event)
 				break;
-			if (event == &restart_event) {
-				if (copied)
-					return copied;
-				ring_advance(&reader->ringbuf);
-				put_hone_event(event);
-				add_initial_events(reader);
-				return 0;
-			}
-			ring_advance(&reader->ringbuf);
 			reader->buflen = reader->format(reader,
 					event, reader->buf, READ_BUFFER_SIZE);
-			put_hone_event(event);
+			if (free_event)
+				free_event(event);
 		}
 		n = min(reader->buflen - (size_t) *offset, length - copied);
 		if (copy_to_user(buffer + copied, reader->buf + *offset, n))
@@ -1005,34 +978,12 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 
 	switch (num) {
 	case HEIO_RESTART:
-		add_initial_events(reader);
+		atomic_set_mask(READER_RESTART, &reader->flags);
 		if (waitqueue_active(&event_wait_queue))
 			wake_up_interruptible_all(&event_wait_queue);
 		return 0;
-	case HEIO_MARK_RESTART:
-	{
-		struct hone_event *event = NULL;
-		unsigned long flags;
-
-		spin_lock_irqsave(&reader->ring_lock, flags);
-		if (!ring_unused(&reader->ringbuf))
-			ring_pop(&reader->ringbuf, &event);
-		if (!ring_prepend(&reader->ringbuf, &restart_event))
-			get_hone_event(&restart_event);
-		// XXX: else increment appropriate missed event counter
-		spin_unlock_irqrestore(&reader->ring_lock, flags);
-		if (event)
-			put_hone_event(event);   // XXX: increment missed event counter
-		//add_initial_events(reader);
-		if (waitqueue_active(&event_wait_queue))
-			wake_up_interruptible_all(&event_wait_queue);
-		return 0;
-	}
 	case HEIO_GET_AT_HEAD:
-	{
-		struct hone_event *event = ring_peek(&reader->ringbuf);
-		return event == &head_event ? 1 : 0;
-	}
+		return atomic_read(&reader->flags) & READER_INIT ? 1 : 0;
 	case HEIO_GET_SNAPLEN:
 		return put_user(reader->snaplen, (unsigned int __user *) param);
 	case HEIO_SET_SNAPLEN:
@@ -1050,12 +1001,12 @@ static unsigned int hone_poll(struct file *file,
 	if (!reader)
 		return -EFAULT;
 
-	if (!ring_is_empty(&reader->ringbuf))
+	if (!reader_will_block(reader))
 		return POLLIN;
 
 	poll_wait(file, &event_wait_queue, wait);
 
-	if (!ring_is_empty(&reader->ringbuf))
+	if (!reader_will_block(reader))
 		return POLLIN;
 
 	return 0;
