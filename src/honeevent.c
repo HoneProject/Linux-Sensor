@@ -103,29 +103,38 @@ struct ring_buf {
 	struct hone_event **data;
 };
 
-#define ring_front(ring) ((unsigned int) atomic_read(&(ring)->front))
-#define ring_back(ring) ((unsigned int) atomic_read(&(ring)->back))
-#define ring_add(ring, ctr, val) (atomic_add(val, &(ring)->ctr))
-#define ring_unused(ring) ((ring)->length - (ring_back(ring) - ring_front(ring)))
-#define ring_is_empty(ring) (ring_front(ring) == ring_back(ring))
+#define ring_is_empty(ring) \
+	(atomic_read(&(ring)->front) == atomic_read(&(ring)->back))
 
 static int ring_append(struct ring_buf *ring, struct hone_event *event)
 {
-	if (!ring_unused(ring))
-		return -1;
-	ring->data[ring_back(ring) % ring->length] = event;
-	ring_add(ring, back, 1);
+	unsigned int back;
+
+	for (;;) {
+		back = atomic_read(&ring->back);
+		if (back - (unsigned int) atomic_read(&ring->front) >= ring->length)
+			return -1;
+		if ((unsigned int) atomic_cmpxchg(&ring->back, back, back + 1) == back)
+			break;
+	}
+	ring->data[back % ring->length] = event;
 	return 0;
 }
 
 static struct hone_event *ring_pop(struct ring_buf *ring)
 {
-	struct hone_event *event;
+	struct hone_event *event, **slot;
+	unsigned int front;
 
-	if (ring_is_empty(ring))
-		return NULL;
-	event = ring->data[ring_front(ring) % ring->length];
-	ring_add(ring, front, 1);
+	for (;;) {
+		front = atomic_read(&ring->front);
+		if (front == (unsigned int) atomic_read(&ring->back))
+			return NULL;
+		slot = ring->data + front % ring->length;
+		if ((event = *slot) && cmpxchg(slot, event, NULL) == event)
+			break;
+	}
+	atomic_inc(&ring->front);
 	return event;
 }
 
@@ -140,7 +149,6 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 
 struct hone_reader {
 	struct ring_buf ringbuf;
-	spinlock_t ring_lock;
 	struct notifier_block nb;
 	struct timespec start_time;
 	unsigned int (*format)(struct hone_reader *,
@@ -690,18 +698,10 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 static void inline enqueue_event(struct hone_reader *reader,
 		struct hone_event *event)
 {
-	unsigned int added;
-	unsigned long flags;
-
-	if (event->type == HONE_PROCESS) {
-		// Ignore threads for now
-		if (event->process.pid != event->process.tgid)
+	// Ignore threads for now
+	if (event->type == HONE_PROCESS && event->process.pid != event->process.tgid)
 			return;
-	}
-	spin_lock_irqsave(&reader->ring_lock, flags);
-	added = !ring_append(&reader->ringbuf, event);
-	spin_unlock_irqrestore(&reader->ring_lock, flags);
-	if (added)
+	if (!ring_append(&reader->ringbuf, event))
 		get_hone_event(event);
 	// XXX: else increment appropriate missed event counter
 }
@@ -732,14 +732,13 @@ static struct hone_reader *alloc_hone_reader(void)
 	if (!(reader = kzalloc(sizeof(*reader), GFP_KERNEL)))
 		goto reader_alloc_failed;
 	if (!(reader->buf = (typeof(reader->buf))
-				__get_free_pages(GFP_KERNEL, READ_BUFFER_PAGE_ORDER)))
+				__get_free_pages(GFP_KERNEL | __GFP_ZERO, READ_BUFFER_PAGE_ORDER)))
 		goto buffer_alloc_failed;
 	if (!(reader->ringbuf.data = (typeof(reader->ringbuf.data))
-				__get_free_pages(GFP_KERNEL, pageorder)))
+				__get_free_pages(GFP_KERNEL | __GFP_ZERO, pageorder)))
 		goto ring_alloc_failed;
 	reader->ringbuf.length =
 			size_of_pages(pageorder) / sizeof(*(reader->ringbuf.data));
-	spin_lock_init(&reader->ring_lock);
 	//reader->format = format_as_text;
 	reader->format = format_as_pcapng;
 	atomic_set(&reader->flags, READER_INIT);
