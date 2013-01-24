@@ -144,8 +144,9 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 #define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGE_ORDER)
 
 #define READER_FINISH 0x00000001
-#define READER_INIT 0x00000002
-#define READER_RESTART 0x00000003
+#define READER_HEAD 0x00000002
+#define READER_INIT 0x00000004
+#define READER_RESTART 0x00000007
 
 struct hone_reader {
 	struct ring_buf ringbuf;
@@ -741,7 +742,7 @@ static struct hone_reader *alloc_hone_reader(void)
 			size_of_pages(pageorder) / sizeof(*(reader->ringbuf.data));
 	//reader->format = format_as_text;
 	reader->format = format_as_pcapng;
-	atomic_set(&reader->flags, READER_INIT);
+	atomic_set(&reader->flags, READER_HEAD | READER_INIT);
 	return reader;
 
 ring_alloc_failed:
@@ -925,11 +926,14 @@ try_sleep:
 					return copied;
 				atomic_clear_mask(READER_FINISH, &reader->flags);
 				return 0;
+			} else if (atomic_read(&reader->flags) & READER_HEAD) {
+				atomic_clear_mask(READER_HEAD, &reader->flags);
+				event = &head_event;
+				free_event = NULL;
 			} else if (atomic_read(&reader->flags) & READER_INIT) {
 				atomic_clear_mask(READER_INIT, &reader->flags);
 				add_initial_events(reader);
-				event = &head_event;
-				free_event = NULL;
+				continue;
 			} else if (reader->event) {
 				if ((event = reader->event))
 					reader->event = event->next;
@@ -968,6 +972,7 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 #endif
 {
 	struct hone_reader *reader = file->private_data;
+	int err;
 
 	if (!reader)
 		return -EFAULT;
@@ -982,11 +987,14 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 			wake_up_interruptible_all(&event_wait_queue);
 		return 0;
 	case HEIO_GET_AT_HEAD:
-		return atomic_read(&reader->flags) & READER_INIT ? 1 : 0;
+		return atomic_read(&reader->flags) & READER_HEAD ? 1 : 0;
 	case HEIO_GET_SNAPLEN:
 		return put_user(reader->snaplen, (unsigned int __user *) param);
 	case HEIO_SET_SNAPLEN:
-		return get_user(reader->snaplen, (unsigned int __user *) param);
+		if ((err = get_user(reader->snaplen, (unsigned int __user *) param)))
+			return err;
+		atomic_set_mask(READER_HEAD, &reader->flags);
+		return 0;
 	}
 
 	return -EINVAL;
