@@ -21,5 +21,7 @@
 #define HEIO_GET_AT_HEAD _IO(0xE0, 0x03)
 #define HEIO_GET_SNAPLEN _IOR(0xE0, 0x04, int)
 #define HEIO_SET_SNAPLEN _IOW(0xE0, 0x05, int)
+#define HEIO_GET_RING_PAGES _IOR(0xE0, 0x06, int)
+#define HEIO_SET_RING_PAGES _IOW(0xE0, 0x07, int)
 
 #endif /* _HONEEVENT_H */

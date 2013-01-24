@@ -63,18 +63,36 @@ module_param(comment, charp, S_IRUGO);
 MODULE_PARM_DESC(comment, "If given, will be included in the comment option "
 		"of the section header block.  Spaces can be encoded as \\040 or \\x20.");
 
-#ifdef CONFIG_64BIT
-#define DEFAULT_PAGE_ORDER 3
-#else
-#define DEFAULT_PAGE_ORDER 2
+#ifndef CONFIG_HONE_MAX_PAGEORDER
+#define CONFIG_HONE_MAX_PAGEORDER 16
 #endif
 
-static unsigned char pageorder = DEFAULT_PAGE_ORDER;
-module_param(pageorder, byte, S_IRUGO);
-MODULE_PARM_DESC(pageorder, "Specifies the page order to use when allocating "
-		"the ring buffer (default: " __stringify(DEFAULT_PAGE_ORDER) ").  The "
-		"buffer size is computed using the formula size = PAGE_SIZE * pow(2, "
-		"pageorder).");
+#ifdef CONFIG_HONE_DEFAULT_PAGEORDER
+	#define DEFAULT_PAGE_ORDER CONFIG_HONE_DEFAULT_PAGEORDER
+#else
+	#ifdef CONFIG_64BIT
+		#define DEFAULT_PAGE_ORDER 3
+	#else
+		#define DEFAULT_PAGE_ORDER 2
+	#endif
+#endif
+
+
+// XXX: check that parameter does not exceed max_pageorder when set
+static unsigned char default_pageorder = DEFAULT_PAGE_ORDER;
+module_param(default_pageorder, byte, S_IRUGO);
+MODULE_PARM_DESC(default_pageorder,
+		"Specifies the default page order to use when allocating the ring buffer "
+		"(default: " __stringify(DEFAULT_PAGE_ORDER) ").  The buffer size is "
+		"computed using the formula size = PAGE_SIZE * (2 << pageorder).");
+
+// XXX: check that parameter does not exceed CONFIG_HONE_MAX_PAGEORDER when set
+static unsigned char max_pageorder = CONFIG_HONE_MAX_PAGEORDER;
+module_param(max_pageorder, byte, S_IRUGO);
+MODULE_PARM_DESC(max_pageorder,
+		"Specifies the maximum page order to use when allocating the ring buffer "
+		"(default: " __stringify(CONFIG_HONE_MAX_PAGEORDER) ").  The buffer size "
+		"is computed the same as for default_pageorder.");
 
 static struct class *class_hone;
 
@@ -97,14 +115,18 @@ struct guid_struct {
 };
 
 struct ring_buf {
+	rwlock_t lock;
 	atomic_t front;
 	atomic_t back;
+	int pageorder;
 	unsigned int length;
 	struct hone_event **data;
 };
 
-#define ring_is_empty(ring) \
-	(atomic_read(&(ring)->front) == atomic_read(&(ring)->back))
+#define ring_front(ring) ((unsigned int) atomic_read(&(ring)->front))
+#define ring_back(ring) ((unsigned int) atomic_read(&(ring)->back))
+#define ring_used(ring) (ring_back(ring) - ring_front(ring))
+#define ring_is_empty(ring) (ring_front(ring) == ring_back(ring))
 
 static int ring_append(struct ring_buf *ring, struct hone_event *event)
 {
@@ -138,8 +160,7 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 	return event;
 }
 
-#define pow2(order) (1 << (order))
-#define size_of_pages(order) (PAGE_SIZE * pow2(order))
+#define size_of_pages(order) (PAGE_SIZE << (order))
 #define READ_BUFFER_PAGE_ORDER 5
 #define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGE_ORDER)
 
@@ -696,13 +717,19 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 	return n;
 }
 
-static void inline enqueue_event(struct hone_reader *reader,
+static void inline enqueue_event(struct ring_buf *ring,
 		struct hone_event *event)
 {
+	unsigned long flags;
+	int err;
+
 	// Ignore threads for now
 	if (event->type == HONE_PROCESS && event->process.pid != event->process.tgid)
 			return;
-	if (!ring_append(&reader->ringbuf, event))
+	read_lock_irqsave(&ring->lock, flags);
+	err = ring_append(ring, event);
+	read_unlock_irqrestore(&ring->lock, flags);
+	if (!err)
 		get_hone_event(event);
 	// XXX: else increment appropriate missed event counter
 }
@@ -712,7 +739,7 @@ static int hone_event_handler(struct notifier_block *nb, unsigned long val, void
 	struct hone_reader *reader =
 			container_of(nb, struct hone_reader, nb);
 
-	enqueue_event(reader, v);
+	enqueue_event(&reader->ringbuf, v);
 	if (waitqueue_active(&event_wait_queue))
 		wake_up_interruptible_all(&event_wait_queue);
 
@@ -721,7 +748,7 @@ static int hone_event_handler(struct notifier_block *nb, unsigned long val, void
 
 static void free_hone_reader(struct hone_reader *reader)
 {
-	free_pages((unsigned long) reader->ringbuf.data, pageorder);
+	free_pages((unsigned long) reader->ringbuf.data, reader->ringbuf.pageorder);
 	free_pages((unsigned long) reader->buf, READ_BUFFER_PAGE_ORDER);
 	kfree(reader);
 }
@@ -736,10 +763,12 @@ static struct hone_reader *alloc_hone_reader(void)
 				__get_free_pages(GFP_KERNEL | __GFP_ZERO, READ_BUFFER_PAGE_ORDER)))
 		goto buffer_alloc_failed;
 	if (!(reader->ringbuf.data = (typeof(reader->ringbuf.data))
-				__get_free_pages(GFP_KERNEL | __GFP_ZERO, pageorder)))
+				__get_free_pages(GFP_KERNEL | __GFP_ZERO, default_pageorder)))
 		goto ring_alloc_failed;
+	reader->ringbuf.pageorder = default_pageorder;
 	reader->ringbuf.length =
-			size_of_pages(pageorder) / sizeof(*(reader->ringbuf.data));
+			size_of_pages(default_pageorder) / sizeof(*(reader->ringbuf.data));
+	rwlock_init(&reader->ringbuf.lock);
 	//reader->format = format_as_text;
 	reader->format = format_as_pcapng;
 	atomic_set(&reader->flags, READER_HEAD | READER_INIT);
@@ -939,7 +968,10 @@ try_sleep:
 					reader->event = event->next;
 				free_event = free_hone_event;
 			} else {
+				unsigned long flags;
+				read_lock_irqsave(&reader->ringbuf.lock, flags);
 				event = ring_pop(&reader->ringbuf);
+				read_unlock_irqrestore(&reader->ringbuf.lock, flags);
 				free_event = put_hone_event;
 			}
 
@@ -961,6 +993,43 @@ try_sleep:
 	if (!copied)
 		goto try_sleep;
 	return copied;
+}
+
+static int resize_ring_buffer(struct ring_buf *ring, unsigned int order)
+{
+	int tmp_order;
+	struct hone_event **data, **tmp;
+	unsigned int front, back, length;
+
+	if (!(data = (typeof(data)) __get_free_pages(
+					GFP_KERNEL | __GFP_ZERO, order)))
+		return -ENOMEM;
+	length = size_of_pages(order) / sizeof(*data);
+
+	write_lock(&ring->lock);
+	while (ring_used(ring) > length)
+		// XXX: increment dropped event counter
+		put_hone_event(ring_pop(ring));
+	front = ring_front(ring) % ring->length;
+	back = ring_back(ring) % ring->length;
+	if (front > back) {
+		memcpy(ring->data + front, data, (ring->length - front) * sizeof(*data));
+		memcpy(ring->data, data + front, back * sizeof(*data));
+		back = ring->length - front + back;
+	} else {
+		back -= front;
+		memcpy(ring->data + front, data, back * sizeof(*data));
+	}
+	tmp = ring->data;
+	tmp_order = ring->pageorder;
+	ring->data = data;
+	ring->pageorder = order;
+	ring->length = length;
+	atomic_set(&ring->front, 0);
+	atomic_set(&ring->back, back);
+	write_unlock(&ring->lock);
+	free_pages((unsigned long) tmp, tmp_order);
+	return 0;
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,11)
@@ -995,6 +1064,20 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 			return err;
 		atomic_set_mask(READER_HEAD, &reader->flags);
 		return 0;
+	case HEIO_GET_RING_PAGES:
+	{
+		int pages = 1 << reader->ringbuf.pageorder;
+		return put_user(pages, (unsigned int __user *) param);
+	}
+	case HEIO_SET_RING_PAGES:
+	{
+		int pages, err;
+		if ((err = get_user(pages, (unsigned int __user *) param)))
+			return err;
+		if (pages < 0 || pages > 1 << max_pageorder)
+			return -EINVAL;
+		return resize_ring_buffer(&reader->ringbuf, order_base_2(pages));
+	}
 	}
 
 	return -EINVAL;
@@ -1081,10 +1164,12 @@ static int __init honeevent_init(void)
 {
 	int err;
 
-	if (pageorder > 10) {
+	/*
+	if (max_pageorder > 10) {
 		printm(KERN_ERR, "pageorder must be <= 10\n");
 		return -1;
 	}
+	*/
 	if (hostid && *hostid) {
 		if (parse_guid(&host_guid, hostid)) {
 			printm(KERN_ERR, "invalid host GUID provided\n");
