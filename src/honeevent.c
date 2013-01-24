@@ -1106,11 +1106,8 @@ static const struct file_operations device_ops = {
 	.read = hone_read,
 	.open = hone_open,
 	.release = hone_release,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,11)
 	.unlocked_ioctl = hone_ioctl,
-#else
-	.ioctl = hone_ioctl,
-#endif
+	.compat_ioctl = hone_ioctl,
 	.poll = hone_poll,
 };
 
