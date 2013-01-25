@@ -101,6 +101,7 @@ static struct class *class_hone;
 #define mod_name (THIS_MODULE->name)
 
 #define HONE_USER_HEAD (HONE_USER | 1)
+#define HONE_USER_TAIL (HONE_USER | 2)
 
 #define GUID_FMT "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x"
 #define GUID_TUPLE(G) (G)->data1, (G)->data2, (G)->data3, \
@@ -165,20 +166,25 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 #define READ_BUFFER_PAGE_ORDER 5
 #define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGE_ORDER)
 
-#define READER_FINISH 0x00000001
-#define READER_HEAD 0x00000002
-#define READER_INIT 0x00000004
-#define READER_RESTART 0x00000007
+#define READER_HEAD 0x00000001
+#define READER_INIT 0x00000002
+#define READER_TAIL 0x00000004
+#define READER_FINISH 0x00000008
+#define READER_RESTART 0x0000000F
 
 struct hone_reader {
 	rwlock_t lock;
 	struct ring_buf *ringbuf;
 	struct notifier_block nb;
+	struct timespec boot_time;
 	struct timespec start_time;
 	unsigned int (*format)(struct hone_reader *,
 			struct hone_event *, char *, unsigned int);
 	atomic_t flags;
 	unsigned int snaplen;
+	struct statistics start_received;
+	struct statistics start_dropped;
+	struct statistics dropped;
 	struct hone_event *event;
 	unsigned int buflen;
 	char *buf;
@@ -189,7 +195,7 @@ static bool host_guid_set = false;
 static DECLARE_WAIT_QUEUE_HEAD(event_wait_queue);
 
 static struct hone_event head_event = {HONE_USER_HEAD, {ATOMIC_INIT(1)}};
-
+static struct hone_event tail_event = {HONE_USER_TAIL, {ATOMIC_INIT(1)}};
 
 static int reader_will_block(struct hone_reader *reader)
 {
@@ -308,20 +314,16 @@ static unsigned int format_as_text(struct hone_reader *reader,
 		break;
 	}
 	case HONE_USER_HEAD:
-	{
-		struct timespec ts;
-
-		ktime_get_ts(&ts);
 		if (host_guid_set)
 			printbuf("%lu.%09lu HEAD %lu.%09lu {" GUID_FMT "}\n",
-					ts.tv_sec, ts.tv_nsec,
 					reader->start_time.tv_sec, reader->start_time.tv_nsec,
+					reader->boot_time.tv_sec, reader->boot_time.tv_nsec,
 					GUID_TUPLE(&host_guid));
 		else
-			printbuf("%lu.%09lu HEAD %lu.%09lu\n", ts.tv_sec, ts.tv_nsec,
-					reader->start_time.tv_sec, reader->start_time.tv_nsec);
+			printbuf("%lu.%09lu HEAD %lu.%09lu\n",
+					reader->start_time.tv_sec, reader->start_time.tv_nsec,
+					reader->boot_time.tv_sec, reader->boot_time.tv_nsec);
 		break;
-	}
 	default:
 		printbuf("%lu.%09lu ???? %d\n",
 				event->ts.tv_sec, event->ts.tv_nsec, event->type);
@@ -489,6 +491,86 @@ static unsigned int format_ifdesc_block(struct hone_reader *reader,
 	pos += block_set(pos, uint16_t, 0);    // reserved
 	pos += block_set(pos, uint32_t, reader->snaplen);  // snaplen
 	pos += block_opt_ptr(pos, 3, if_desc, strlen(if_desc));  // if_description
+	pos += block_end_opt(pos);
+	length_end = (typeof(length_end)) pos;
+	pos += block_set(pos, uint32_t, 0);
+	*length_top = *length_end = (unsigned int) (pos - buf);
+	return *length_top;
+}
+
+/* Interface Statistics Block {{{
+    0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+   +---------------------------------------------------------------+
+ 0 |                   Block Type = 0x00000005                     |
+   +---------------------------------------------------------------+
+ 4 |                      Block Total Length                       |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ 8 |                         Interface ID                          |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+12 |                        Timestamp (High)                       |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+16 |                        Timestamp (Low)                        |
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+20 /                                                               /
+   /                      Options (variable)                       /
+   /                                                               /
+   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+   |                      Block Total Length                       |
+   +---------------------------------------------------------------+
+}}} */	
+static unsigned int format_ifstats_block(struct hone_reader *reader,
+		char *buf, int buflen)
+{
+	char *pos = buf;
+	unsigned int *length_top, *length_end;
+	struct timespec ts;
+	struct timestamp tstamp, start_time;
+	struct statistics received, dropped;
+	uint64_t procrecv, procdrop, sockrecv, sockdrop, pktrecv, pktdrop;
+
+	get_hone_statistics(&received, &dropped);
+	procrecv = atomic64_read(&received.process) -
+			atomic64_read(&reader->start_received.process);
+	procdrop = (atomic64_read(&dropped.process) -
+			atomic64_read(&reader->start_dropped.process)) +
+			atomic64_read(&reader->dropped.process);
+	sockrecv = atomic64_read(&received.socket) -
+			atomic64_read(&reader->start_received.socket);
+	sockdrop = (atomic64_read(&dropped.socket) -
+			atomic64_read(&reader->start_dropped.socket)) +
+			atomic64_read(&reader->dropped.socket);
+	pktrecv = atomic64_read(&received.packet) -
+			atomic64_read(&reader->start_received.packet);
+	pktdrop = (atomic64_read(&dropped.packet) -
+			atomic64_read(&reader->start_dropped.packet)) +
+			atomic64_read(&reader->dropped.packet);
+
+	ktime_get_ts(&ts);
+	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
+			reader->boot_time.tv_nsec + ts.tv_nsec);
+	tstamp = timespec_to_tstamp(ts);
+	set_normalized_timespec(&ts,
+			reader->boot_time.tv_sec + reader->start_time.tv_sec,
+			reader->boot_time.tv_nsec + reader->start_time.tv_nsec);
+	start_time = timespec_to_tstamp(ts);
+	// Be sure to update this value if fields are added below.
+#define IFSTATS_BLOCK_MIN_LEN 56
+	if (buflen < IFDESC_BLOCK_MIN_LEN)
+		return 0;
+	pos += block_set(pos, uint32_t, 0x00000005);      // block type
+	length_top = (typeof(length_top)) pos;
+	pos += block_set(pos, uint32_t, 0);               // block length
+	pos += block_set(pos, uint32_t, 0);               // interface ID
+	pos += block_set(pos, struct timestamp, tstamp); // timestamp
+	pos += block_opt_t(pos, 2, struct timestamp, start_time); // start time
+	//pos += block_opt_t(pos, 6, uint64_t, filteraccept); // accepted by filter
+	pos += block_opt_t(pos, 257, uint64_t, procrecv); // process events
+	pos += block_opt_t(pos, 258, uint64_t, procdrop); // process events dropped
+	pos += block_opt_t(pos, 259, uint64_t, sockrecv); // socket events
+	pos += block_opt_t(pos, 260, uint64_t, sockdrop); // socket events dropped
+	pos += block_opt_t(pos, 261, uint64_t, pktrecv);  // packets received
+	pos += block_opt_t(pos, 262, uint64_t, pktdrop);  // packets dropped
 	pos += block_end_opt(pos);
 	length_end = (typeof(length_end)) pos;
 	pos += block_set(pos, uint32_t, 0);
@@ -703,13 +785,13 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 
 	// The following is used instead of timespec_add()
 	// because it doesn't exist in older kernel versions.
-	set_normalized_timespec(&ts, reader->start_time.tv_sec + event->ts.tv_sec,
-			reader->start_time.tv_nsec + event->ts.tv_nsec);
+	set_normalized_timespec(&ts, reader->boot_time.tv_sec + event->ts.tv_sec,
+			reader->boot_time.tv_nsec + event->ts.tv_nsec);
 	tstamp = timespec_to_tstamp(ts);
 	switch (event->type) {
-	case HONE_USER_HEAD:
-		n = format_sechdr_block(buf, buflen);
-		n += format_ifdesc_block(reader, buf + n, buflen - n);
+	case HONE_PACKET:
+		n = format_packet_block(
+				&event->packet, reader->snaplen, &tstamp, buf, buflen);
 		break;
 	case HONE_PROCESS:
 		n = format_process_block(&event->process, &tstamp, buf, buflen);
@@ -717,9 +799,12 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 	case HONE_SOCKET:
 		n = format_connection_block(&event->socket, &tstamp, buf, buflen);
 		break;
-	case HONE_PACKET:
-		n = format_packet_block(
-				&event->packet, reader->snaplen, &tstamp, buf, buflen);
+	case HONE_USER_HEAD:
+		n = format_sechdr_block(buf, buflen);
+		n += format_ifdesc_block(reader, buf + n, buflen - n);
+		break;
+	case HONE_USER_TAIL:
+		n = format_ifstats_block(reader, buf + n, buflen - n);
 		break;
 	}
 
@@ -728,6 +813,26 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 		buf[n - 1] = '\n';
 	}
 	return n;
+}
+
+static void inc_stats_counter(struct statistics *stats, int type)
+{
+	atomic64_t *counter;
+
+	switch(type) {
+	case HONE_PROCESS:
+		counter = &stats->process;
+		break;
+	case HONE_SOCKET:
+		counter = &stats->socket;
+		break;
+	case HONE_PACKET:
+		counter = &stats->packet;
+		break;
+	default:
+		return;
+	}
+	atomic64_inc(counter);
 }
 
 static void inline enqueue_event(struct hone_reader *reader,
@@ -743,9 +848,10 @@ static void inline enqueue_event(struct hone_reader *reader,
 	read_lock_irqsave(&reader->lock, flags);
 	err = ring_append(reader->ringbuf, event);
 	read_unlock_irqrestore(&reader->lock, flags);
-	if (err)
+	if (err) {
+		inc_stats_counter(&reader->dropped, event->type);
 		put_hone_event(event);
-		// XXX: increment appropriate missed event counter
+	}
 }
 
 static int hone_event_handler(struct notifier_block *nb, unsigned long val, void *v)
@@ -835,7 +941,7 @@ extern const struct file_operations socket_file_ops;
 #define OPEN_FDS open_fds->fds_bits
 #endif
 
-static struct hone_event *__add_files(
+static struct hone_event *__add_files(struct hone_reader *reader,
 		struct hone_event *event, struct task_struct *task)
 {
 	struct hone_event *sk_event;
@@ -869,9 +975,9 @@ static struct hone_event *__add_files(
 				sk_event->next = event;
 				event = sk_event;
 				event->ts = task->start_time;
+			} else {
+				atomic64_inc(&reader->dropped.socket);
 			}
-			// else
-			//   XXX: increment missed process counter
 		}
 	}
 out:
@@ -884,7 +990,8 @@ out:
 #define prev_task(p) \
 	list_entry_rcu((p)->tasks.prev, struct task_struct, tasks)
 
-static struct hone_event *add_current_tasks(struct hone_event *event)
+static struct hone_event *add_current_tasks(
+		struct hone_reader *reader, struct hone_event *event)
 {
 	struct hone_event *proc_event;
 	struct task_struct *task;
@@ -893,16 +1000,16 @@ static struct hone_event *add_current_tasks(struct hone_event *event)
 	for (task = &init_task; (task = prev_task(task)) != &init_task; ) {
 		if (task->flags & PF_EXITING)
 			continue;
-		event = __add_files(event, task);
+		event = __add_files(reader, event, task);
 		if ((proc_event = __alloc_process_event(task,
 						task->flags & PF_FORKNOEXEC ? PROC_FORK : PROC_EXEC,
 						GFP_ATOMIC))) {
 			proc_event->next = event;
 			event = proc_event;
 			event->ts = task->start_time;
+		} else {
+			atomic64_inc(&reader->dropped.process);
 		}
-		// else
-		//   XXX: increment missed process counter
 	}
 	rcu_read_unlock();
 	return event;
@@ -922,7 +1029,7 @@ static void free_initial_events(struct hone_reader *reader)
 static void add_initial_events(struct hone_reader *reader)
 {
 	free_initial_events(reader);
-	reader->event = add_current_tasks(NULL);
+	reader->event = add_current_tasks(reader, NULL);
 }
 
 static int hone_open(struct inode *inode, struct file *file)
@@ -937,12 +1044,14 @@ static int hone_open(struct inode *inode, struct file *file)
 	if (iminor(inode) == 1)
 		reader->format = format_as_text;
 	file->private_data = reader;
-	getboottime(&reader->start_time);
+	getboottime(&reader->boot_time);
+	ktime_get_ts(&reader->start_time);
 	reader->nb.notifier_call = hone_event_handler;
 	if ((err = hone_notifier_register(&reader->nb))) {
 		printm(KERN_ERR, "hone_notifier_register() failed with error %d\n", err);
 		goto register_failed;
 	}
+	get_hone_statistics(&reader->start_received, &reader->start_dropped);
 	__module_get(THIS_MODULE);
 	return 0;
 
@@ -991,19 +1100,27 @@ try_sleep:
 
 	while (copied < length) {
 		if (!(*offset)) {
+			int flags;
 			struct hone_event *event;
 			void (*free_event)(struct hone_event *);
 
-			if (atomic_read(&reader->flags) & READER_FINISH) {
+			flags = atomic_read(&reader->flags);
+			if (flags & READER_TAIL) {
+				if (copied)
+					return copied;
+				atomic_clear_mask(READER_TAIL, &reader->flags);
+				event = &tail_event;
+				free_event = NULL;
+			} else if (flags & READER_FINISH) {
 				if (copied)
 					return copied;
 				atomic_clear_mask(READER_FINISH, &reader->flags);
 				return 0;
-			} else if (atomic_read(&reader->flags) & READER_HEAD) {
+			} else if (flags & READER_HEAD) {
 				atomic_clear_mask(READER_HEAD, &reader->flags);
 				event = &head_event;
 				free_event = NULL;
-			} else if (atomic_read(&reader->flags) & READER_INIT) {
+			} else if (flags & READER_INIT) {
 				atomic_clear_mask(READER_INIT, &reader->flags);
 				add_initial_events(reader);
 				continue;
@@ -1052,8 +1169,10 @@ static int resize_ring_buffer(struct hone_reader *reader, unsigned int order)
 	reader->ringbuf = tmp;
 	write_unlock(&reader->lock);
 
-	while ((event = ring_pop(ring)))
+	while ((event = ring_pop(ring))) {
+		inc_stats_counter(&reader->dropped, event->type);
 		put_hone_event(event);
+	}
 	free_ring_buffer(ring);
 
 	return 0;

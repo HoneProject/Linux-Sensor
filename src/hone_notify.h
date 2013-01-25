@@ -73,6 +73,15 @@ struct hone_event {
 };
 
 #ifdef __KERNEL__
+
+struct statistics {
+	atomic64_t process;
+	atomic64_t socket;
+	atomic64_t packet;
+};
+
+extern void get_hone_statistics(struct statistics *received,
+		struct statistics *dropped);
 extern int hone_notifier_register(struct notifier_block *nb);
 extern int hone_notifier_unregister(struct notifier_block *nb);
 extern int hone_notify_init(void);

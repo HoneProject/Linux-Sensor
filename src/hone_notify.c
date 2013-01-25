@@ -31,6 +31,38 @@
 static struct kmem_cache *hone_cache;
 static RAW_NOTIFIER_HEAD(notifier_list);
 static DEFINE_RWLOCK(notifier_lock);
+static struct {
+	struct statistics received;
+	struct statistics dropped;
+} statistics = {
+	{
+		.process = ATOMIC64_INIT(0),
+		.socket = ATOMIC64_INIT(0),
+		.packet = ATOMIC64_INIT(0)
+	},
+	{
+		.process = ATOMIC64_INIT(0),
+		.socket = ATOMIC64_INIT(0),
+		.packet = ATOMIC64_INIT(0)
+	}
+};
+
+#define copy_atomic64(dst, src) atomic64_set(&(dst), atomic64_read(&(src)))
+
+static void copy_statistics(const struct statistics *src, struct statistics *dst)
+{
+	copy_atomic64(dst->process, src->process);
+	copy_atomic64(dst->socket, src->socket);
+	copy_atomic64(dst->packet, src->packet);
+}
+
+void get_hone_statistics(struct statistics *received, struct statistics *dropped)
+{
+	if (received)
+		copy_statistics(&statistics.received, received);
+	if (dropped)
+		copy_statistics(&statistics.dropped, dropped);
+}
 
 #ifndef rcu_dereference_raw
 #define notifier_call_chain_empty() (rcu_dereference(notifier_list.head) == NULL)
@@ -149,10 +181,12 @@ static int process_event_handler(struct notifier_block *nb,
 	if (notifier_call_chain_empty())
 		return 0;
 	if ((event = __alloc_process_event(v, val, GFP_ATOMIC))) {
+		atomic64_inc(&statistics.received.process);
 		hone_notifier_notify(event);
 		put_hone_event(event);
+	} else {
+		atomic64_inc(&statistics.dropped.process);
 	}
-	// XXX: else increment missed process counter
 	return 0;
 }
 
@@ -186,10 +220,12 @@ static int socket_event_handler(struct notifier_block *nb,
 	if (notifier_call_chain_empty())
 		return 0;
 	if ((event = __alloc_socket_event((unsigned long) v, val, current, GFP_ATOMIC))) {
+		atomic64_inc(&statistics.received.socket);
 		hone_notifier_notify(event);
 		put_hone_event(event);
+	} else {
+		atomic64_inc(&statistics.dropped.socket);
 	}
-	// XXX: else increment missed connection counter
 	return 0;
 }
 
@@ -206,10 +242,12 @@ static int packet_event_handler(struct notifier_block *nb,
 		event->packet.pid = (unsigned long) (args->sk ? args->sk->sk_protinfo : 0);
 		event->packet.skb = skb_clone(args->skb, GFP_ATOMIC);
 		event->packet.dir = (val == PKTNOT_PACKET_IN);
+		atomic64_inc(&statistics.received.packet);
 		hone_notifier_notify(event);
 		put_hone_event(event);
+	} else {
+		atomic64_inc(&statistics.dropped.packet);
 	}
-	// XXX: else increment missed packet counter
 	return 0;
 }
 
@@ -278,6 +316,7 @@ MODULE_DESCRIPTION("Hone event notifier module.");
 MODULE_AUTHOR("Brandon Carpenter");
 MODULE_LICENSE("GPL");
 
+EXPORT_SYMBOL_GPL(get_hone_statistics);
 EXPORT_SYMBOL_GPL(hone_notifier_register);
 EXPORT_SYMBOL_GPL(hone_notifier_unregister);
 EXPORT_SYMBOL_GPL(alloc_hone_event);
