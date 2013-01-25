@@ -5,7 +5,7 @@ clean:
 	-rm -f honelogd
 
 honelogd: honelogd.c
-	gcc -Wall -O2 -I../src -o $@ $<
+	gcc -Wall -O2 $(CFLAGS) -I../src -o $@ $<
 
 install: honelogd
 	install $^ /usr/local/sbin
