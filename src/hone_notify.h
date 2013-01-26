@@ -80,8 +80,18 @@ struct statistics {
 	atomic64_t packet;
 };
 
+#define STATISTICS_INIT {ATOMIC64_INIT(0), ATOMIC64_INIT(0), ATOMIC64_INIT(0)}
+#define DEFINE_STATISTICS(name) struct statistics name = STATISTICS_INIT
+
+static inline void init_statistics(struct statistics *stats)
+{
+	atomic64_set(&stats->process, 0);
+	atomic64_set(&stats->socket, 0);
+	atomic64_set(&stats->packet, 0);
+}
+
 extern void get_hone_statistics(struct statistics *received,
-		struct statistics *dropped);
+		struct statistics *dropped, struct timespec *ts);
 extern int hone_notifier_register(struct notifier_block *nb);
 extern int hone_notifier_unregister(struct notifier_block *nb);
 extern int hone_notify_init(void);

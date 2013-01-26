@@ -182,8 +182,7 @@ struct hone_reader {
 			struct hone_event *, char *, unsigned int);
 	atomic_t flags;
 	unsigned int snaplen;
-	struct statistics start_received;
-	struct statistics start_dropped;
+	struct statistics delivered;
 	struct statistics dropped;
 	struct hone_event *event;
 	unsigned int buflen;
@@ -527,33 +526,15 @@ static unsigned int format_ifstats_block(struct hone_reader *reader,
 	struct timespec ts;
 	struct timestamp tstamp, start_time;
 	struct statistics received, dropped;
-	uint64_t procrecv, procdrop, sockrecv, sockdrop, pktrecv, pktdrop;
 
-	get_hone_statistics(&received, &dropped);
-	procrecv = atomic64_read(&received.process) -
-			atomic64_read(&reader->start_received.process);
-	procdrop = (atomic64_read(&dropped.process) -
-			atomic64_read(&reader->start_dropped.process)) +
-			atomic64_read(&reader->dropped.process);
-	sockrecv = atomic64_read(&received.socket) -
-			atomic64_read(&reader->start_received.socket);
-	sockdrop = (atomic64_read(&dropped.socket) -
-			atomic64_read(&reader->start_dropped.socket)) +
-			atomic64_read(&reader->dropped.socket);
-	pktrecv = atomic64_read(&received.packet) -
-			atomic64_read(&reader->start_received.packet);
-	pktdrop = (atomic64_read(&dropped.packet) -
-			atomic64_read(&reader->start_dropped.packet)) +
-			atomic64_read(&reader->dropped.packet);
-
+	get_hone_statistics(&received, &dropped, &ts);
+	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
+			reader->boot_time.tv_nsec + ts.tv_nsec);
+	start_time = timespec_to_tstamp(ts);
 	ktime_get_ts(&ts);
 	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
 			reader->boot_time.tv_nsec + ts.tv_nsec);
 	tstamp = timespec_to_tstamp(ts);
-	set_normalized_timespec(&ts,
-			reader->boot_time.tv_sec + reader->start_time.tv_sec,
-			reader->boot_time.tv_nsec + reader->start_time.tv_nsec);
-	start_time = timespec_to_tstamp(ts);
 	// Be sure to update this value if fields are added below.
 #define IFSTATS_BLOCK_MIN_LEN 56
 	if (buflen < IFDESC_BLOCK_MIN_LEN)
@@ -564,13 +545,19 @@ static unsigned int format_ifstats_block(struct hone_reader *reader,
 	pos += block_set(pos, uint32_t, 0);               // interface ID
 	pos += block_set(pos, struct timestamp, tstamp); // timestamp
 	pos += block_opt_t(pos, 2, struct timestamp, start_time); // start time
+	pos += block_opt_t(pos, 4, uint64_t, atomic64_read(&received.packet));
+	pos += block_opt_t(pos, 5, uint64_t, atomic64_read(&dropped.packet));
 	//pos += block_opt_t(pos, 6, uint64_t, filteraccept); // accepted by filter
-	pos += block_opt_t(pos, 257, uint64_t, procrecv); // process events
-	pos += block_opt_t(pos, 258, uint64_t, procdrop); // process events dropped
-	pos += block_opt_t(pos, 259, uint64_t, sockrecv); // socket events
-	pos += block_opt_t(pos, 260, uint64_t, sockdrop); // socket events dropped
-	pos += block_opt_t(pos, 261, uint64_t, pktrecv);  // packets received
-	pos += block_opt_t(pos, 262, uint64_t, pktdrop);  // packets dropped
+	pos += block_opt_t(pos, 7, uint64_t, atomic64_read(&reader->dropped.packet));
+	pos += block_opt_t(pos, 8, uint64_t, atomic64_read(&reader->delivered.packet));
+	pos += block_opt_t(pos, 257, uint64_t, atomic64_read(&received.process));
+	pos += block_opt_t(pos, 258, uint64_t, atomic64_read(&dropped.process));
+	pos += block_opt_t(pos, 259, uint64_t, atomic64_read(&reader->dropped.process));
+	pos += block_opt_t(pos, 260, uint64_t, atomic64_read(&reader->delivered.process));
+	pos += block_opt_t(pos, 261, uint64_t, atomic64_read(&received.socket));
+	pos += block_opt_t(pos, 262, uint64_t, atomic64_read(&dropped.socket));
+	pos += block_opt_t(pos, 263, uint64_t, atomic64_read(&reader->dropped.socket));
+	pos += block_opt_t(pos, 264, uint64_t, atomic64_read(&reader->delivered.socket));
 	pos += block_end_opt(pos);
 	length_end = (typeof(length_end)) pos;
 	pos += block_set(pos, uint32_t, 0);
@@ -1046,12 +1033,13 @@ static int hone_open(struct inode *inode, struct file *file)
 	file->private_data = reader;
 	getboottime(&reader->boot_time);
 	ktime_get_ts(&reader->start_time);
+	init_statistics(&reader->delivered);
+	init_statistics(&reader->dropped);
 	reader->nb.notifier_call = hone_event_handler;
 	if ((err = hone_notifier_register(&reader->nb))) {
 		printm(KERN_ERR, "hone_notifier_register() failed with error %d\n", err);
 		goto register_failed;
 	}
-	get_hone_statistics(&reader->start_received, &reader->start_dropped);
 	__module_get(THIS_MODULE);
 	return 0;
 
@@ -1140,6 +1128,7 @@ try_sleep:
 				break;
 			reader->buflen = reader->format(reader,
 					event, reader->buf, READ_BUFFER_SIZE);
+			inc_stats_counter(&reader->delivered, event->type);
 			if (free_event)
 				free_event(event);
 		}

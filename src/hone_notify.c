@@ -31,21 +31,10 @@
 static struct kmem_cache *hone_cache;
 static RAW_NOTIFIER_HEAD(notifier_list);
 static DEFINE_RWLOCK(notifier_lock);
-static struct {
-	struct statistics received;
-	struct statistics dropped;
-} statistics = {
-	{
-		.process = ATOMIC64_INIT(0),
-		.socket = ATOMIC64_INIT(0),
-		.packet = ATOMIC64_INIT(0)
-	},
-	{
-		.process = ATOMIC64_INIT(0),
-		.socket = ATOMIC64_INIT(0),
-		.packet = ATOMIC64_INIT(0)
-	}
-};
+
+static struct timespec start_time;
+static DEFINE_STATISTICS(hone_received);
+static DEFINE_STATISTICS(hone_dropped);
 
 #define copy_atomic64(dst, src) atomic64_set(&(dst), atomic64_read(&(src)))
 
@@ -56,12 +45,15 @@ static void copy_statistics(const struct statistics *src, struct statistics *dst
 	copy_atomic64(dst->packet, src->packet);
 }
 
-void get_hone_statistics(struct statistics *received, struct statistics *dropped)
+void get_hone_statistics(struct statistics *received,
+		struct statistics *dropped, struct timespec *ts)
 {
 	if (received)
-		copy_statistics(&statistics.received, received);
+		copy_statistics(&hone_received, received);
 	if (dropped)
-		copy_statistics(&statistics.dropped, dropped);
+		copy_statistics(&hone_dropped, dropped);
+	if (ts)
+		*ts = start_time;
 }
 
 #ifndef rcu_dereference_raw
@@ -181,11 +173,11 @@ static int process_event_handler(struct notifier_block *nb,
 	if (notifier_call_chain_empty())
 		return 0;
 	if ((event = __alloc_process_event(v, val, GFP_ATOMIC))) {
-		atomic64_inc(&statistics.received.process);
+		atomic64_inc(&hone_received.process);
 		hone_notifier_notify(event);
 		put_hone_event(event);
 	} else {
-		atomic64_inc(&statistics.dropped.process);
+		atomic64_inc(&hone_dropped.process);
 	}
 	return 0;
 }
@@ -220,11 +212,11 @@ static int socket_event_handler(struct notifier_block *nb,
 	if (notifier_call_chain_empty())
 		return 0;
 	if ((event = __alloc_socket_event((unsigned long) v, val, current, GFP_ATOMIC))) {
-		atomic64_inc(&statistics.received.socket);
+		atomic64_inc(&hone_received.socket);
 		hone_notifier_notify(event);
 		put_hone_event(event);
 	} else {
-		atomic64_inc(&statistics.dropped.socket);
+		atomic64_inc(&hone_dropped.socket);
 	}
 	return 0;
 }
@@ -242,11 +234,11 @@ static int packet_event_handler(struct notifier_block *nb,
 		event->packet.pid = (unsigned long) (args->sk ? args->sk->sk_protinfo : 0);
 		event->packet.skb = skb_clone(args->skb, GFP_ATOMIC);
 		event->packet.dir = (val == PKTNOT_PACKET_IN);
-		atomic64_inc(&statistics.received.packet);
+		atomic64_inc(&hone_received.packet);
 		hone_notifier_notify(event);
 		put_hone_event(event);
 	} else {
-		atomic64_inc(&statistics.dropped.packet);
+		atomic64_inc(&hone_dropped.packet);
 	}
 	return 0;
 }
@@ -284,6 +276,7 @@ int hone_notify_init(void)
 		printk(KERN_ERR "%s: kmem_cache_create() failed\n", THIS_MODULE->name);
 		return -ENOMEM;
 	}
+	ktime_get_ts(&start_time);
 
 	return 0;
 }
