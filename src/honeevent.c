@@ -342,14 +342,11 @@ struct timestamp {
 	uint32_t ts_low;
 };
 
-static inline struct timestamp timespec_to_tstamp(struct timespec ts)
+static void timespec_to_tstamp(struct timestamp *tstamp, struct timespec *ts)
 {
-	uint64_t val = (((uint64_t) ts.tv_sec) * 1000000LL) + ts.tv_nsec / 1000;
-	struct timestamp tstamp = {
-		.ts_high = val >> 32,
-		.ts_low = val & 0xFFFFFFFF,
-	};
-	return tstamp;
+	uint64_t val = (((uint64_t) ts->tv_sec) * 1000000LL) + ts->tv_nsec / 1000;
+	tstamp->ts_high = val >> 32;
+	tstamp->ts_low = val & 0xFFFFFFFF;
 }
 
 /* Section Header Block {{{
@@ -502,20 +499,20 @@ static unsigned int format_ifstats_block(struct hone_reader *reader,
 	get_hone_statistics(&received, &dropped, &ts);
 	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
 			reader->boot_time.tv_nsec + ts.tv_nsec);
-	start_time = timespec_to_tstamp(ts);
+	timespec_to_tstamp(&start_time, &ts);
 	ktime_get_ts(&ts);
 	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
 			reader->boot_time.tv_nsec + ts.tv_nsec);
-	tstamp = timespec_to_tstamp(ts);
+	timespec_to_tstamp(&tstamp, &ts);
 	// Be sure to update this value if fields are added below.
 #define IFSTATS_BLOCK_MIN_LEN 56
 	if (buflen < IFDESC_BLOCK_MIN_LEN)
 		return 0;
-	pos += block_set(pos, uint32_t, 0x00000005);      // block type
+	pos += block_set(pos, uint32_t, 0x00000005);              // block type
 	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);               // block length
-	pos += block_set(pos, uint32_t, 0);               // interface ID
-	pos += block_set(pos, struct timestamp, tstamp); // timestamp
+	pos += block_set(pos, uint32_t, 0);                       // block length
+	pos += block_set(pos, uint32_t, 0);                       // interface ID
+	pos += block_set(pos, struct timestamp, tstamp);          // timestamp
 	pos += block_opt_t(pos, 2, struct timestamp, start_time); // start time
 	pos += block_opt_t(pos, 4, uint64_t, atomic64_read(&received.packet));
 	pos += block_opt_t(pos, 5, uint64_t, atomic64_read(&dropped.packet));
@@ -579,8 +576,7 @@ static size_t format_process_block(struct process_event *event,
 	pos += block_set(pos, uint32_t, 0x00000101);     // block type
 	length_top = (typeof(length_top)) pos;
 	pos += block_set(pos, uint32_t, 0);              // block length
-	pos += block_set(pos, uint32_t,                  // PID
-			(event->pid == event->tgid ? event->pid : event->tgid));
+	pos += block_set(pos, uint32_t, event->tgid);    // PID
 	pos += block_set(pos, struct timestamp, *tstamp); // timestamp
 	if (event->event != PROC_EXEC)
 		pos += block_opt_t(pos, 2, uint32_t, (event->event == PROC_FORK ? 1 : -1));
@@ -647,8 +643,7 @@ static size_t format_connection_block(struct socket_event *event,
 	length_top = (typeof(length_top)) pos;
 	pos += block_set(pos, uint32_t, 0);           // block length
 	pos += block_set(pos, uint32_t, event->sock & 0xFFFFFFFF); // connection id
-	pos += block_set(pos, uint32_t,               // PID
-			(event->pid == event->tgid ? event->pid : event->tgid));
+	pos += block_set(pos, uint32_t, event->tgid); // PID
 	pos += block_set(pos, struct timestamp, *tstamp); // timestamp
 	if (event->event) {
 		pos += block_opt_t(pos, 2, uint32_t, -1);
@@ -735,27 +730,36 @@ static size_t format_packet_block(struct packet_event *event,
 	return *length_top;
 }
 
+static void normalize_ts(struct timestamp *tstamp,
+		struct timespec *boot_time, struct timespec *event_time)
+{
+	struct timespec ts;
+
+	// The following is used instead of timespec_add()
+	// because it doesn't exist in older kernel versions.
+	set_normalized_timespec(&ts, boot_time->tv_sec + event_time->tv_sec,
+			boot_time->tv_nsec + event_time->tv_nsec);
+	timespec_to_tstamp(tstamp, &ts);
+}
+
 static unsigned int format_as_pcapng(struct hone_reader *reader,
 		struct hone_event *event, char *buf, unsigned int buflen)
 {
 	unsigned int n = 0;
-	struct timespec ts;
 	struct timestamp tstamp;
 
-	// The following is used instead of timespec_add()
-	// because it doesn't exist in older kernel versions.
-	set_normalized_timespec(&ts, reader->boot_time.tv_sec + event->ts.tv_sec,
-			reader->boot_time.tv_nsec + event->ts.tv_nsec);
-	tstamp = timespec_to_tstamp(ts);
 	switch (event->type) {
 	case HONE_PACKET:
+		normalize_ts(&tstamp, &reader->boot_time, &event->ts);
 		n = format_packet_block(
 				&event->packet, reader->snaplen, &tstamp, buf, buflen);
 		break;
 	case HONE_PROCESS:
+		normalize_ts(&tstamp, &reader->boot_time, &event->ts);
 		n = format_process_block(&event->process, &tstamp, buf, buflen);
 		break;
 	case HONE_SOCKET:
+		normalize_ts(&tstamp, &reader->boot_time, &event->ts);
 		n = format_connection_block(&event->socket, &tstamp, buf, buflen);
 		break;
 	case HONE_USER_HEAD:
@@ -767,10 +771,6 @@ static unsigned int format_as_pcapng(struct hone_reader *reader,
 		break;
 	}
 
-	if (n > buflen) {
-		n = buflen;
-		buf[n - 1] = '\n';
-	}
 	return n;
 }
 
