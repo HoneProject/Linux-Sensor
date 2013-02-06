@@ -1154,9 +1154,14 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 		} else {
 			sk = NULL;
 		}
-		if (reader->filter_sk)
-			sock_put(reader->filter_sk);
-		reader->filter_sk = sk;
+		for (;;) {
+			struct sock *old_sk = reader->filter_sk;
+			if (cmpxchg(&reader->filter_sk, old_sk, sk) == old_sk) {
+				if (old_sk)
+					sock_put(old_sk);
+				break;
+			}
+		}
 		return 0;
 	}
 	}
