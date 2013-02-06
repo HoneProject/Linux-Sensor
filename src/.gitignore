@@ -7,3 +7,5 @@
 .tmp_versions
 System.map
 modules.order
+ioctl-list.c
+ioctl-list
