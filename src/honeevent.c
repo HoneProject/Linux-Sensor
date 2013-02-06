@@ -158,6 +158,7 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 #define READER_FILTER_PID 0x00000100
 
 struct hone_reader {
+	struct semaphore sem;
 	struct ring_buf ringbuf;
 	struct notifier_block nb;
 	struct timespec boot_time;
@@ -862,6 +863,7 @@ static struct hone_reader *alloc_hone_reader(void)
 	//reader->format = format_as_text;
 	reader->format = format_as_pcapng;
 	atomic_set(&reader->flags, READER_HEAD | READER_INIT);
+	sema_init(&reader->sem, 1);
 	return reader;
 
 alloc_failed:
@@ -1040,23 +1042,29 @@ try_sleep:
 			return -EINTR;
 	}
 
+	if (file->f_flags & O_NONBLOCK) {
+		(down_trylock(&reader->sem))
+			return -EAGAIN;
+	} if (down_interruptible(&reader->sem)) {
+		return -EINTR;
+	}
+
 	while (copied < length) {
-		if (!(*offset)) {
+		if (!*offset) {
 			int flags;
 			struct hone_event *event;
 			void (*free_event)(struct hone_event *);
 
 			flags = atomic_read(&reader->flags);
 			if (flags & READER_TAIL) {
-				if (copied)
-					return copied;
 				atomic_clear_mask(READER_TAIL, &reader->flags);
 				event = &tail_event;
 				free_event = NULL;
 			} else if (flags & READER_FINISH) {
 				if (copied)
-					return copied;
+					break;
 				atomic_clear_mask(READER_FINISH, &reader->flags);
+				up(&reader->sem);
 				return 0;
 			} else if (flags & READER_HEAD) {
 				atomic_clear_mask(READER_HEAD, &reader->flags);
@@ -1084,13 +1092,16 @@ try_sleep:
 				free_event(event);
 		}
 		n = min(reader->buflen - (size_t) *offset, length - copied);
-		if (copy_to_user(buffer + copied, reader->buf + *offset, n))
+		if (copy_to_user(buffer + copied, reader->buf + *offset, n)) {
+			up(&reader->sem);
 			return -EFAULT;
+		}
 		copied += n;
 		*offset += n;
 		if (*offset >= reader->buflen)
 			*offset = 0;
 	}
+	up(&reader->sem);
 	if (!copied)
 		goto try_sleep;
 	return copied;
@@ -1132,9 +1143,9 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 	case HEIO_SET_FILTER_SOCK:
 	{
 		int fd = (int) param;
-		struct socket *sock;
 		struct sock *sk;
 		if (fd != -1) {
+			struct socket *sock;
 			if (!(sock = sockfd_lookup(fd, &err)))
 				return err;
 			sk = sock->sk;
