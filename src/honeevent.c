@@ -1126,8 +1126,7 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 	case HEIO_GET_SNAPLEN:
 		return put_user(reader->snaplen, (unsigned int __user *) param);
 	case HEIO_SET_SNAPLEN:
-		if ((err = get_user(reader->snaplen, (unsigned int __user *) param)))
-			return err;
+		reader->snaplen = (unsigned int) param;
 		atomic_set_mask(READER_HEAD, &reader->flags);
 		return 0;
 	case HEIO_SET_FILTER_SOCK:

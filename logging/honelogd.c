@@ -277,7 +277,7 @@ int main(int argc, char *argv[])
 		log_msg(LOG_ERR, "%s: open() failed: %m:\n", dev_path);
 		exit(EXIT_FAILURE);
 	}
-	if (snaplen && ioctl(fd, HEIO_SET_SNAPLEN, &snaplen) == -1) {
+	if (snaplen && ioctl(fd, HEIO_SET_SNAPLEN, snaplen) == -1) {
 		log_msg(LOG_ERR, "ioctl() failed: %m\n");
 		exit(EXIT_FAILURE);
 	}
