@@ -155,6 +155,7 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 #define READER_TAIL 0x00000004
 #define READER_FINISH 0x00000008
 #define READER_RESTART 0x0000000F
+#define READER_FILTER_PID 0x00000100
 
 struct hone_reader {
 	struct ring_buf ringbuf;
@@ -167,6 +168,8 @@ struct hone_reader {
 	unsigned int snaplen;
 	struct statistics delivered;
 	struct statistics dropped;
+	struct sock *filter_sk;
+	atomic64_t filtered;
 	struct hone_event *event;
 	unsigned int buflen;
 	char *buf;
@@ -516,7 +519,7 @@ static unsigned int format_ifstats_block(struct hone_reader *reader,
 	pos += block_opt_t(pos, 2, struct timestamp, start_time); // start time
 	pos += block_opt_t(pos, 4, uint64_t, atomic64_read(&received.packet));
 	pos += block_opt_t(pos, 5, uint64_t, atomic64_read(&dropped.packet));
-	//pos += block_opt_t(pos, 6, uint64_t, filteraccept); // accepted by filter
+	pos += block_opt_t(pos, 6, uint64_t, atomic64_read(&reader->filtered));
 	pos += block_opt_t(pos, 7, uint64_t, atomic64_read(&reader->dropped.packet));
 	pos += block_opt_t(pos, 8, uint64_t, atomic64_read(&reader->delivered.packet));
 	pos += block_opt_t(pos, 257, uint64_t, atomic64_read(&received.process));
@@ -799,7 +802,13 @@ static void inline enqueue_event(struct hone_reader *reader,
 {
 	// Ignore threads for now
 	if (event->type == HONE_PROCESS && event->process.pid != event->process.tgid)
-			return;
+		return;
+	// Filter out packets for local socket, if set
+	if (event->type == HONE_PACKET && reader->filter_sk &&
+			event->packet.sock == (unsigned long) reader->filter_sk) {
+		atomic64_inc(&reader->filtered);
+		return;
+	}
 	get_hone_event(event);
 	if (ring_append(&reader->ringbuf, event)) {
 		inc_stats_counter(&reader->dropped, event->type);
@@ -1002,6 +1011,10 @@ static int hone_release(struct inode *inode, struct file *file)
 	file->private_data = NULL;
 	while ((event = ring_pop(&reader->ringbuf)))
 		put_hone_event(event);
+	if (reader->filter_sk) {
+		sock_put(reader->filter_sk);
+		reader->filter_sk = NULL;
+	}
 	free_initial_events(reader);
 	free_hone_reader(reader);
 	module_put(THIS_MODULE);
@@ -1083,6 +1096,8 @@ try_sleep:
 	return copied;
 }
 
+extern void fput(struct file *);
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,11)
 static long hone_ioctl(struct file *file, unsigned int num,
 		unsigned long param)
@@ -1115,6 +1130,25 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 			return err;
 		atomic_set_mask(READER_HEAD, &reader->flags);
 		return 0;
+	case HEIO_SET_FILTER_SOCK:
+	{
+		int fd = (int) param;
+		struct socket *sock;
+		struct sock *sk;
+		if (fd != -1) {
+			if (!(sock = sockfd_lookup(fd, &err)))
+				return err;
+			sk = sock->sk;
+			sock_hold(sk);
+			fput(sock->file);
+		} else {
+			sk = NULL;
+		}
+		if (reader->filter_sk)
+			sock_put(reader->filter_sk);
+		reader->filter_sk = sk;
+		return 0;
+	}
 	}
 
 	return -EINVAL;
