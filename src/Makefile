@@ -52,7 +52,7 @@ KSRC ?= /lib/modules/$(KVER)/build
 
 hone-source = Makefile defsyms.mk $(filter-out %.mod.c,$(wildcard *.[ch]))
 pkg-source = dkms.conf.in dkms.conf LICENSE README debian/* hone.spec.in hone.spec
-clean-files = dkms.conf hone.spec
+clean-files = dkms.conf hone.spec ioctl-list.c
 pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//' || sed -r '2,$d;s/^.*\((.*)\).*$/\1/' debian/changelog)
 
 all: prereq_check modules
@@ -81,7 +81,7 @@ modules_install install:
 
 distclean:
 	-rm -f *.[aos] *.ko .*.cmd *.mod.c *.defsyms .System.map.md5 \
-	       defsyms.symvers Module.symvers modules.order
+	       defsyms.symvers Module.symvers modules.order ioctl-list
 	-rm -rf .tmp_versions
 
 clean: distclean
@@ -122,6 +122,19 @@ hone.spec: hone.spec.in $(hone-source)
 
 dkms.conf: dkms.conf.in $(hone-source)
 	sed -r 's/^(PACKAGE_VERSION=).*$$/\1"$(VERSION)"/' $< > $@
+
+ioctl-list.c: honeevent.h
+	@echo '#include <sys/ioctl.h>' > $@
+	@echo '#include <stdio.h>' >> $@
+	@echo '#include "honeevent.h"' >> $@
+	@echo 'int main(int argc, char *argv)' >> $@
+	@echo '{' >> $@
+	@sed -r 's/^\s*#\s*define\s+(\w+)\s+_IO.*$$/\tprintf("\1 = 0x%08x\\n", \1);/;t;d' honeevent.h >> $@
+	@echo '	return 0;' >> $@
+	@echo '}' >> $@
+
+ioctl-list: ioctl-list.c
+	gcc -o $@ $<
 
 PHONY: all prereq_check help modules modules_install install clean distclean \
 	snapshot-changelog packages deb rpm tarball
