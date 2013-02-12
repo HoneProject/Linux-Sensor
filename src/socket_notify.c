@@ -25,6 +25,7 @@
 #include <net/inet_common.h>
 
 #include "socket_notify.h"
+#include "version.h"
 
 #if !defined(CONFIG_IPV6) && defined(CONFIG_IPV6_MODULE)
 #warning Hone does not support IPv6 when it is built as a module.
@@ -207,7 +208,7 @@ void socket_notify_remove(void)
 }
 
 //#ifdef CONFIG_SOCKET_NOTIFY
-static char __initdata version[] = "0.3";
+static char version[] __initdata = HONE_VERSION;
 
 static int __init socket_notify_module_init(void)
 {
@@ -229,6 +230,7 @@ module_exit(socket_notify_module_exit);
 MODULE_DESCRIPTION("Socket event notification module.");
 MODULE_AUTHOR("Brandon Carpenter");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(sock_notifier_register);
 EXPORT_SYMBOL_GPL(sock_notifier_unregister);

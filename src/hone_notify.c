@@ -27,6 +27,7 @@
 #include "socket_notify.h"
 #include "packet_notify.h"
 #include "hone_notify.h"
+#include "version.h"
 
 static struct kmem_cache *hone_cache;
 static RAW_NOTIFIER_HEAD(notifier_list);
@@ -286,7 +287,7 @@ void hone_notify_release(void)
 	kmem_cache_destroy(hone_cache);
 }
 
-static char __initdata version[] = "0.3";
+static char version[] __initdata = HONE_VERSION;
 
 static int __init hone_notify_module_init(void)
 {
@@ -308,6 +309,7 @@ module_exit(hone_notify_module_exit);
 MODULE_DESCRIPTION("Hone event notifier module.");
 MODULE_AUTHOR("Brandon Carpenter");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(get_hone_statistics);
 EXPORT_SYMBOL_GPL(hone_notifier_register);

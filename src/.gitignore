@@ -9,3 +9,8 @@ System.map
 modules.order
 ioctl-list.c
 ioctl-list
+version.h
+dkms.conf
+hone.spec
+tags
+TAGS

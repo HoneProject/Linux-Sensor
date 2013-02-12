@@ -41,9 +41,9 @@ include $(src)/defsyms.mk
 else
 
 SVNVER := $(shell svnversion 2>/dev/null | grep -o '^[0-9]\+[A-Z]\?')
-GITVER := $(shell git log -n 1 2>/dev/null | awk '/^commit/ {print substr($$2, 1, 7)}')
-MODVER := $(shell date +'%y.%m.%d')
-VERSION := $(MODVER)$(if $(SVNVER),+$(SVNVER),+$(GITVER))
+GITVER := $(shell git log -1 --pretty=format:"%h" 2>/dev/null)
+MODVER := $(shell [ -f VERSION ] && cat VERSION || date '+%y.%m')
+VERSION := $(MODVER)$(if $(SVNVER),+$(SVNVER),$(if $(GITVER),+$(GITVER)))
 version-name := hone-$(VERSION)
 tarball-name := $(version-name).tar.gz
 
@@ -51,8 +51,8 @@ KVER ?= $(shell uname -r)
 KSRC ?= /lib/modules/$(KVER)/build
 
 hone-source = Makefile defsyms.mk $(filter-out %.mod.c,$(wildcard *.[ch]))
-pkg-source = dkms.conf.in dkms.conf LICENSE README debian/* hone.spec.in hone.spec
-clean-files = dkms.conf hone.spec ioctl-list.c
+pkg-source = dkms.conf.in dkms.conf LICENSE README VERSION debian/* hone.spec.in hone.spec
+clean-files = dkms.conf hone.spec ioctl-list.c version.h
 pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//' || sed -r '2,$d;s/^.*\((.*)\).*$/\1/' debian/changelog)
 
 all: prereq_check modules
@@ -62,6 +62,28 @@ tags: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
 
 TAGS: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
 	etags $^
+
+VER_NUMBER := $(firstword $(subst -, ,$(MODVER)))
+VER_EXTRA := $(subst $(VER_NUMBER),,$(MODVER))
+VER_SPLIT := $(subst ., ,$(VER_NUMBER))
+VER_MAJOR := $(word 1,$(VER_SPLIT))
+VER_MINOR := $(word 2,$(VER_SPLIT))
+VER_MICRO := $(word 3,$(VER_SPLIT))
+VER_BUILD := $(word 4,$(VER_SPLIT))
+
+bump:
+	@eval `date '+YEAR=%y MONTH=%m DAY=%d'`; \
+	VERSION="$$YEAR.$$MONTH"; \
+	if [ "$$VERSION" == "$(VER_MAJOR).$(VER_MINOR)" ]; then \
+	  VERSION="$$VERSION.$$DAY"; \
+	  if [ "$$DAY" == "$(VER_MICRO)" ]; then \
+	    VERSION="$$VERSION.$$(( $(VER_BUILD) + 1 ))"; \
+	  fi; \
+	fi; \
+	echo $${VERSION}$(VER_EXTRA) > VERSION
+
+version.h: VERSION
+	@echo -e '#ifndef __VERSION_H__\n#define __VERSION_H__\n#define HONE_VERSION "$(MODVER)"\n#endif' > $@
 
 prereq_check:
 	@ if [ ! -f $(KSRC)/include/linux/version.h ] && \
@@ -73,18 +95,18 @@ prereq_check:
 help:
 	$(MAKE) -C $(KSRC) M=$(CURDIR) help
 
-modules:
+modules: version.h
 	$(MAKE) -C $(KSRC) M=$(CURDIR) modules
 
 modules_install install:
 	$(MAKE) -C $(KSRC) M=$(CURDIR) modules_install
 
-distclean:
+clean:
 	-rm -f *.[aos] *.ko .*.cmd *.mod.c *.defsyms .System.map.md5 \
 	       defsyms.symvers Module.symvers modules.order ioctl-list
 	-rm -rf .tmp_versions
 
-clean: distclean
+distclean: clean
 	-rm -f $(clean-files)
 
 snapshot-changelog:
@@ -137,6 +159,6 @@ ioctl-list: ioctl-list.c
 	gcc -o $@ $<
 
 PHONY: all prereq_check help modules modules_install install clean distclean \
-	snapshot-changelog packages deb rpm tarball
+	snapshot-changelog packages deb rpm tarball bump
 
 endif

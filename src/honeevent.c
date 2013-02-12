@@ -36,13 +36,15 @@
 #include "hone_notify.h"
 #include "honeevent.h"
 #include "mmutil.h"
+#include "version.h"
 
 MODULE_DESCRIPTION("Hone event character device.");
 MODULE_AUTHOR("Brandon Carpenter");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(HONE_VERSION);
 MODULE_ALIAS("hone");
 
-static char __initdata version[] = "0.3";
+static char version[] __devinitdata = HONE_VERSION;
 
 static char *devname = "hone";
 module_param(devname, charp, S_IRUGO);
@@ -1043,7 +1045,7 @@ try_sleep:
 	}
 
 	if (file->f_flags & O_NONBLOCK) {
-		(down_trylock(&reader->sem))
+		if (down_trylock(&reader->sem))
 			return -EAGAIN;
 	} if (down_interruptible(&reader->sem)) {
 		return -EINTR;
@@ -1197,7 +1199,7 @@ static const struct file_operations device_ops = {
 	.poll = hone_poll,
 };
 
-static int parse_guid(struct guid_struct *guid, const char *input)
+static int __init parse_guid(struct guid_struct *guid, const char *input)
 {
 	int i, val;
 	const char *pos = input;

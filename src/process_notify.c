@@ -24,6 +24,7 @@
 #endif
 
 #include "process_notify.h"
+#include "version.h"
 
 static RAW_NOTIFIER_HEAD(notifier_list);
 static DEFINE_RWLOCK(notifier_lock);
@@ -162,7 +163,7 @@ void process_notify_remove(void)
 }
 
 //#ifdef CONFIG_PROCESS_NOTIFY
-static char __initdata version[] = "0.3";
+static char version[] __initdata = HONE_VERSION;
 
 static int __init process_notify_module_init(void)
 {
@@ -184,6 +185,7 @@ module_exit(process_notify_module_exit);
 MODULE_DESCRIPTION("Process event notification module.");
 MODULE_AUTHOR("Brandon Carpenter");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(process_notifier_register);
 EXPORT_SYMBOL_GPL(process_notifier_unregister);

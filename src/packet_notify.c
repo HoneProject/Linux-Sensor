@@ -27,6 +27,7 @@
 
 #include "socket_lookup.h"
 #include "packet_notify.h"
+#include "version.h"
 
 static RAW_NOTIFIER_HEAD(notifier_list);
 static DEFINE_RWLOCK(notifier_lock);
@@ -199,7 +200,7 @@ void packet_notify_remove(void)
 }
 
 //#ifdef CONFIG_PACKET_NOTIFY
-static char __initdata version[] = "0.3";
+static char version[] __initdata = HONE_VERSION;
 
 static int __init packet_notify_module_init(void)
 {
@@ -226,6 +227,7 @@ module_exit(packet_notify_module_exit);
 MODULE_DESCRIPTION("Internet protocol packet event notification module.");
 MODULE_AUTHOR("Brandon Carpenter");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(packet_notifier_register);
 EXPORT_SYMBOL_GPL(packet_notifier_unregister);
