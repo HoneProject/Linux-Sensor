@@ -14,7 +14,7 @@
 # GNU General Public License for more details.
 #
 
-defsyms-names := $(foreach N,$(basename $(obj-m)),$(if $($N-defsyms),$N))
+defsyms-names := $(foreach N,$(basename $(obj-m) $(obj-c)),$(if $(filter file,$(origin $N-defsyms)),$N))
 
 ifneq ($(defsyms-names),)
 
@@ -33,7 +33,7 @@ SP :=
 SP +=
 
 quiet_cmd_defsyms = DEFSYMS $@
-cmd_defsyms = awk '$$3 ~ /^($(subst $(SP),|,$(strip $($*-defsyms))))(.part.[0-9]+)?$$/ {gsub(".part.[0-9]+$$", "", $$3); print $$3 " = 0x" $$1 ";"}' $(SYSMAP) > $@
+cmd_defsyms = awk '$$3 ~ /^($(subst $(SP),|,$(strip $($*-defsyms) $(foreach N,$(patsubst %.o,%-defsyms,$($*-y)),$(value $N)))))(.part.[0-9]+)?$$/ {gsub(".part.[0-9]+$$", "", $$3); print $$3 " = 0x" $$1 ";"}' $(SYSMAP) > $@
 quiet_cmd_md5 = MD5SUM  $3
 cmd_md5 = md5sum $2 > $3
 quiet_cmd_symvers = SYMVERS $@

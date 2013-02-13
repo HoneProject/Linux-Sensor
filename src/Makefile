@@ -16,25 +16,41 @@
 
 ifneq ($(KERNELRELEASE),)
 
-CONFIG_SOCKET_NOTIFY ?= m
-CONFIG_PACKET_NOTIFY ?= m
-CONFIG_PROCESS_NOTIFY ?= m
+CONFIG_SOCKET_NOTIFY ?= c
+CONFIG_PACKET_NOTIFY ?= c
+CONFIG_PROCESS_NOTIFY ?= c
 CONFIG_HONE_NOTIFY ?= m
 CONFIG_HONEEVENT ?= m
 
+CONFIG = $(if $(filter-out n,$(CONFIG_$(1))),-DCONFIG_$(1)$(or \
+	$(if $(filter m,$(CONFIG_$(1))),_MODULE), \
+	$(if $(filter c,$(CONFIG_$(1))),_COMBINED)))
+EXTRA_CFLAGS := $(call CONFIG,SOCKET_NOTIFY) \
+                $(call CONFIG,PACKET_NOTIFY) \
+                $(call CONFIG,PROCESS_NOTIFY) \
+                $(call CONFIG,HONE_NOTIFY) \
+                $(call CONFIG,HONEEVENT)
+COMBINE = $(if $(filter-out c,$(CONFIG_$(1))),,$(2))
+
 obj-$(CONFIG_SOCKET_NOTIFY) += socket_notify.o
-socket_notify-defsyms = inet_family_ops inet6_family_ops
+socket_notify-defsyms := inet_family_ops inet6_family_ops
 
 obj-$(CONFIG_PACKET_NOTIFY) += packet_notify.o
-packet_notify-defsyms = __udp6_lib_lookup nf_tproxy_get_sock_v4
+packet_notify-defsyms := __udp6_lib_lookup nf_tproxy_get_sock_v4
 
 obj-$(CONFIG_PROCESS_NOTIFY) += process_notify.o
-process_notify-defsyms = copy_process compat_do_execve do_execve
+process_notify-defsyms := copy_process compat_do_execve do_execve
 
 obj-$(CONFIG_HONE_NOTIFY) += hone_notify.o
+hone_notify-y := hone_notify_imp.o \
+	$(call COMBINE,PROCESS_NOTIFY,process_notify.o) \
+	$(call COMBINE,SOCKET_NOTIFY,socket_notify.o) \
+	$(call COMBINE,PACKET_NOTIFY,packet_notify.o)
+hone_notify-defsyms := 
 
 obj-$(CONFIG_HONEEVENT) += honeevent.o
-honeevent-defsyms = uts_sem socket_file_ops get_files_struct put_files_struct
+honeevent-y := honeevent_imp.o $(call COMBINE,HONE_NOTIFY,$(hone_notify-y))
+honeevent-defsyms := uts_sem socket_file_ops get_files_struct put_files_struct
 
 include $(src)/defsyms.mk
 

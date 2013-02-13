@@ -1244,6 +1244,13 @@ static int __init parse_guid(struct guid_struct *guid, const char *input)
 	return 0;
 }
 
+#ifdef CONFIG_HONE_NOTIFY_COMBINED
+	int hone_notify_init(void) __init;
+	void hone_notify_release(void);
+#else
+#	define hone_notify_init() (0)
+#	define hone_notify_release()
+#endif
 
 static int __init honeevent_init(void)
 {
@@ -1258,8 +1265,11 @@ static int __init honeevent_init(void)
 				GUID_TUPLE(&host_guid));
 		host_guid_set = true;
 	}
+	if ((err = hone_notify_init()))
+		return -1;
 	if ((err = register_chrdev(major, devname, &device_ops)) < 0) {
 		printm(KERN_ERR, "character device registration returned error %d\n", err);
+		hone_notify_release();
 		return -1;
 	}
 	if (!major)
@@ -1285,6 +1295,7 @@ static void __exit honeevent_exit(void)
 	device_destroy(class_hone, MKDEV(major, 1));
 	class_destroy(class_hone);
 	unregister_chrdev(major, devname);
+	hone_notify_release();
 
 	printk(KERN_INFO "%s: module successfully unloaded\n", mod_name);
 }

@@ -94,8 +94,6 @@ extern void get_hone_statistics(struct statistics *received,
 		struct statistics *dropped, struct timespec *ts);
 extern int hone_notifier_register(struct notifier_block *nb);
 extern int hone_notifier_unregister(struct notifier_block *nb);
-extern int hone_notify_init(void);
-extern void hone_notify_release(void);
 
 extern struct hone_event *alloc_hone_event(unsigned int type, gfp_t flags);
 extern void free_hone_event(struct hone_event *event);
@@ -110,7 +108,7 @@ static inline void get_hone_event(struct hone_event *event)
 	atomic_inc(&event->users);
 }
 
-inline void put_hone_event(struct hone_event *event)
+static inline void put_hone_event(struct hone_event *event)
 {
 	BUG_ON(unlikely(!atomic_read(&event->users)));
 	if (atomic_dec_and_test(&event->users))

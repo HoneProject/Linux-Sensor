@@ -180,7 +180,13 @@ static int install_hook(const char *name,
 	return 0;
 }
 
-int socket_notify_init(void)
+#ifdef CONFIG_SOCKET_NOTIFY_COMBINED
+#  define _STATIC
+#else
+#  define _STATIC static
+#endif
+
+_STATIC int __init socket_notify_init(void)
 {
 	int err;
 
@@ -196,7 +202,7 @@ int socket_notify_init(void)
 	return 0;
 }
 
-void socket_notify_remove(void)
+_STATIC void socket_notify_remove(void)
 {
 #if defined(CONFIG_IPV6)
 	sock_unregister(hooked_inet6_family_ops.family);
@@ -207,7 +213,8 @@ void socket_notify_remove(void)
 	synchronize_net();
 }
 
-//#ifdef CONFIG_SOCKET_NOTIFY
+#ifndef CONFIG_SOCKET_NOTIFY_COMBINED
+
 static char version[] __initdata = HONE_VERSION;
 
 static int __init socket_notify_module_init(void)
@@ -234,5 +241,5 @@ MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(sock_notifier_register);
 EXPORT_SYMBOL_GPL(sock_notifier_unregister);
-//#endif /* CONFIG_SOCKET_NOTIFY */
 
+#endif // CONFIG_SOCKET_NOTIFY_COMBINED

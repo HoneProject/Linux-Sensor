@@ -24,8 +24,6 @@
 #ifdef __KERNEL__
 extern int process_notifier_register(struct notifier_block *nb);
 extern int process_notifier_unregister(struct notifier_block *nb);
-extern int process_notify_init(void);
-extern void process_notify_remove(void);
 #endif /* __KERNEL__ */
 
 #endif /* _PROCESS_NOTIFY_H */

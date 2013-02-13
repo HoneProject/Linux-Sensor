@@ -20,8 +20,6 @@
 #ifdef __KERNEL__
 extern int sock_notifier_register(struct notifier_block *nb);
 extern int sock_notifier_unregister(struct notifier_block *nb);
-extern int socket_notify_init(void);
-extern void socket_notify_remove(void);
 #endif /* __KERNEL__ */
 
 #endif /* _SOCKET_NOTIFY_H */

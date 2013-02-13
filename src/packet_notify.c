@@ -175,7 +175,13 @@ static struct nf_hook_ops nf_inet_hooks[] = {
 #endif // CONFIG_IPV6
 };
 
-int packet_notify_init(void)
+#ifdef CONFIG_PACKET_NOTIFY_COMBINED
+#  define _STATIC
+#else
+#  define _STATIC static
+#endif
+
+_STATIC int __init packet_notify_init(void)
 {
 	int err;
 
@@ -193,13 +199,14 @@ int packet_notify_init(void)
 	return 0;
 }
 
-void packet_notify_remove(void)
+_STATIC void packet_notify_remove(void)
 {
 	unregister_jprobes(inet_jprobes, ARRAY_SIZE(inet_jprobes));
 	nf_unregister_hooks(nf_inet_hooks, ARRAY_SIZE(nf_inet_hooks));
 }
 
-//#ifdef CONFIG_PACKET_NOTIFY
+#ifndef CONFIG_PACKET_NOTIFY_COMBINED
+
 static char version[] __initdata = HONE_VERSION;
 
 static int __init packet_notify_module_init(void)
@@ -231,5 +238,6 @@ MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(packet_notifier_register);
 EXPORT_SYMBOL_GPL(packet_notifier_unregister);
-//#endif /* CONFIG_PACKET_NOTIFY */
+
+#endif // CONFIG_PACKET_NOTIFY_COMBINED
 

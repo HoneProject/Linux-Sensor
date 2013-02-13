@@ -28,8 +28,6 @@ struct packet_args {
 #ifdef __KERNEL__
 extern int packet_notifier_register(struct notifier_block *nb);
 extern int packet_notifier_unregister(struct notifier_block *nb);
-extern int packet_notify_init(void);
-extern void packet_notify_remove(void);
 #endif /* __KERNEL__ */
 
 #endif /* _PACKET_NOTIFY_H */

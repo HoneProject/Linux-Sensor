@@ -127,6 +127,7 @@ struct hone_event *alloc_hone_event(unsigned int type, gfp_t flags)
 	return event;
 }
 
+
 static struct mm_struct *task_mm(struct task_struct *task)
 {
 	struct mm_struct *mm;
@@ -166,6 +167,11 @@ struct hone_event *__alloc_process_event(
 	return event;
 }
 
+
+#if defined(CONFIG_PROCESS_NOTIFY) || \
+    defined(CONFIG_PROCESS_NOTIFY_MODULE) || \
+    defined(CONFIG_PROCESS_NOTIFY_COMBINED)
+
 static int process_event_handler(struct notifier_block *nb,
 		unsigned long val, void *v)
 {
@@ -182,6 +188,26 @@ static int process_event_handler(struct notifier_block *nb,
 	}
 	return 0;
 }
+
+static struct notifier_block process_notifier_block = {
+	.notifier_call = process_event_handler,
+};
+
+#	define register_process() process_notifier_register(&process_notifier_block)
+#	define unregister_process() process_notifier_unregister(&process_notifier_block)
+#else
+#	define register_process()
+#	define unregister_process()
+#endif // CONFIG_PROCESS_NOTIFY*
+
+#ifdef CONFIG_PROCESS_NOTIFY_COMBINED
+	extern int process_notify_init(void) __init;
+	extern void process_notify_remove(void);
+#else
+#	define process_notify_init() (0)
+#	define process_notify_remove()
+#endif // CONFIG_PROCESS_NOTIFY_COMBINED
+
 
 struct hone_event *__alloc_socket_event(unsigned long sock, int type,
 		struct task_struct *task, gfp_t flags)
@@ -205,6 +231,11 @@ struct hone_event *__alloc_socket_event(unsigned long sock, int type,
 	return event;
 }
 
+
+#if defined(CONFIG_SOCKET_NOTIFY) || \
+    defined(CONFIG_SOCKET_NOTIFY_MODULE) || \
+    defined(CONFIG_SOCKET_NOTIFY_COMBINED)
+
 static int socket_event_handler(struct notifier_block *nb,
 		unsigned long val, void *v)
 {
@@ -221,6 +252,30 @@ static int socket_event_handler(struct notifier_block *nb,
 	}
 	return 0;
 }
+
+static struct notifier_block socket_notifier_block = {
+	.notifier_call = socket_event_handler,
+};
+
+#	define register_socket() sock_notifier_register(&socket_notifier_block)
+#	define unregister_socket() sock_notifier_unregister(&socket_notifier_block)
+#else
+#	define register_socket()
+#	define unregister_socket()
+#endif // CONFIG_SOCKET_NOTIFY*
+
+#ifdef CONFIG_SOCKET_NOTIFY_COMBINED
+	extern int socket_notify_init(void) __init;
+	extern void socket_notify_remove(void);
+#else
+#	define socket_notify_init() (0)
+#	define socket_notify_remove()
+#endif // CONFIG_SOCKET_NOTIFY_COMBINED
+
+
+#if defined(CONFIG_PACKET_NOTIFY) || \
+    defined(CONFIG_PACKET_NOTIFY_MODULE) || \
+    defined(CONFIG_PACKET_NOTIFY_COMBINED)
 
 static int packet_event_handler(struct notifier_block *nb,
 		unsigned long val, void *v)
@@ -244,48 +299,86 @@ static int packet_event_handler(struct notifier_block *nb,
 	return 0;
 }
 
-static struct notifier_block process_notifier_block = {
-	.notifier_call = process_event_handler,
-};
-
-static struct notifier_block socket_notifier_block = {
-	.notifier_call = socket_event_handler,
-};
-
 static struct notifier_block packet_notifier_block = {
 	.notifier_call = packet_event_handler,
 };
 
+#	define register_packet() packet_notifier_register(&packet_notifier_block)
+#	define unregister_packet() packet_notifier_unregister(&packet_notifier_block)
+#else
+#	define register_packet()
+#	define unregister_packet()
+#endif // CONFIG_PACKET_NOTIFY*
+
+#ifdef CONFIG_PACKET_NOTIFY_COMBINED
+	extern int packet_notify_init(void) __init;
+	extern void packet_notify_remove(void);
+#else
+#	define packet_notify_init() (0)
+#	define packet_notify_remove()
+#endif // CONFIG_PACKET_NOTIFY_COMBINED
+
+
 static void register_notifiers(void)
 {
-	process_notifier_register(&process_notifier_block);
-	sock_notifier_register(&socket_notifier_block);
-	packet_notifier_register(&packet_notifier_block);
+	register_process();
+	register_socket();
+	register_packet();
 }
 
 static void unregister_notifiers(void)
 {
-	packet_notifier_unregister(&packet_notifier_block);
-	sock_notifier_unregister(&socket_notifier_block);
-	process_notifier_unregister(&process_notifier_block);
+	unregister_packet();
+	unregister_socket();
+	unregister_process();
 }
 
-int hone_notify_init(void)
+#ifdef CONFIG_HONE_NOTIFY_COMBINED
+#  define _STATIC
+#else
+#  define _STATIC static
+#endif
+
+_STATIC int __init hone_notify_init(void)
 {
+	int err = 0;
+
+	if ((err = process_notify_init()))
+		goto out_process_notify;
+	if ((err = socket_notify_init()))
+		goto out_socket_notify;
+	if ((err = packet_notify_init()))
+		goto out_packet_notify;
+
 	if (!(hone_cache = kmem_cache_create("hone_event",
 					sizeof(struct hone_event), 0, 0, NULL))) {
 		printk(KERN_ERR "%s: kmem_cache_create() failed\n", THIS_MODULE->name);
-		return -ENOMEM;
+		err = -ENOMEM;
+		goto out;
 	}
 	ktime_get_ts(&start_time);
 
 	return 0;
+
+out:
+	packet_notify_remove();
+out_packet_notify:
+	socket_notify_remove();
+out_socket_notify:
+	process_notify_remove();
+out_process_notify:
+	return err;
 }
 
-void hone_notify_release(void)
+_STATIC void hone_notify_release(void)
 {
+	packet_notify_remove();
+	socket_notify_remove();
+	process_notify_remove();
 	kmem_cache_destroy(hone_cache);
 }
+
+#ifndef CONFIG_HONE_NOTIFY_COMBINED
 
 static char version[] __initdata = HONE_VERSION;
 
@@ -318,4 +411,6 @@ EXPORT_SYMBOL_GPL(alloc_hone_event);
 EXPORT_SYMBOL_GPL(__alloc_process_event);
 EXPORT_SYMBOL_GPL(__alloc_socket_event);
 EXPORT_SYMBOL_GPL(free_hone_event);
+
+#endif // CONFIG_HONE_NOTIFY_COMBINED
 

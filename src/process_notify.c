@@ -111,7 +111,13 @@ static struct kprobe exit_kprobe = {
 	.pre_handler = exit_handler,
 };
 
-int process_notify_init(void)
+#ifdef CONFIG_PROCESS_NOTIFY_COMBINED
+#  define _STATIC
+#else
+#  define _STATIC static
+#endif
+
+_STATIC int __init process_notify_init(void)
 {
 	int err;
 
@@ -152,7 +158,7 @@ exit_failed:
 	return err;
 }
 
-void process_notify_remove(void)
+_STATIC void process_notify_remove(void)
 {
 #ifdef CONFIG_COMPAT
 	unregister_kretprobe(&compat_exec_kretprobe);
@@ -162,7 +168,8 @@ void process_notify_remove(void)
 	unregister_kprobe(&exit_kprobe);
 }
 
-//#ifdef CONFIG_PROCESS_NOTIFY
+#ifndef CONFIG_PROCESS_NOTIFY_COMBINED
+
 static char version[] __initdata = HONE_VERSION;
 
 static int __init process_notify_module_init(void)
@@ -189,5 +196,6 @@ MODULE_VERSION(HONE_VERSION);
 
 EXPORT_SYMBOL_GPL(process_notifier_register);
 EXPORT_SYMBOL_GPL(process_notifier_unregister);
-//#endif /* CONFIG_PROCESS_NOTIFY */
+
+#endif // CONFIG_PROCESS_NOTIFY_COMBINED
 
