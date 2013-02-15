@@ -1047,7 +1047,7 @@ try_sleep:
 	if (file->f_flags & O_NONBLOCK) {
 		if (down_trylock(&reader->sem))
 			return -EAGAIN;
-	} if (down_interruptible(&reader->sem)) {
+	} else if (down_interruptible(&reader->sem)) {
 		return -EINTR;
 	}
 
