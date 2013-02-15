@@ -15,6 +15,19 @@
 #
 
 ifneq ($(KERNELRELEASE),)
+# This is the kernel build (Kbuild) section.
+
+# Each of the *_NOTIFY variables below can take one of three values:
+#   c - Combine the module with the dependent rather than build separate
+#   m - Build as a separate module
+#   n - Do not build the module at all
+#
+# Dependencies:
+#   honeevent
+#   +-- hone_notify
+#       +-- process_notify
+#       +-- socket_notify
+#       +-- packet_notify
 
 CONFIG_SOCKET_NOTIFY ?= c
 CONFIG_PACKET_NOTIFY ?= c
@@ -22,6 +35,8 @@ CONFIG_PROCESS_NOTIFY ?= c
 CONFIG_HONE_NOTIFY ?= m
 CONFIG_HONEEVENT ?= m
 
+# Since hone is being built out of tree, the CONFIG_* variables are not set.
+# The following lines set the variables via the compiler command-line.
 CONFIG = $(if $(filter-out n,$(CONFIG_$(1))),-DCONFIG_$(1)$(or \
 	$(if $(filter m,$(CONFIG_$(1))),_MODULE), \
 	$(if $(filter c,$(CONFIG_$(1))),_COMBINED)))
@@ -30,6 +45,8 @@ EXTRA_CFLAGS := $(call CONFIG,SOCKET_NOTIFY) \
                 $(call CONFIG,PROCESS_NOTIFY) \
                 $(call CONFIG,HONE_NOTIFY) \
                 $(call CONFIG,HONEEVENT)
+
+# Used to conditionally include files when doing a combined build.
 COMBINE = $(if $(filter-out c,$(CONFIG_$(1))),,$(2))
 
 obj-$(CONFIG_SOCKET_NOTIFY) += socket_notify.o
@@ -46,15 +63,18 @@ hone_notify-y := hone_notify_imp.o \
 	$(call COMBINE,PROCESS_NOTIFY,process_notify.o) \
 	$(call COMBINE,SOCKET_NOTIFY,socket_notify.o) \
 	$(call COMBINE,PACKET_NOTIFY,packet_notify.o)
+# Leave this empty so hone_notify.defsyms is created when combined.
 hone_notify-defsyms := 
 
 obj-$(CONFIG_HONEEVENT) += honeevent.o
 honeevent-y := honeevent_imp.o $(call COMBINE,HONE_NOTIFY,$(hone_notify-y))
 honeevent-defsyms := uts_sem socket_file_ops get_files_struct put_files_struct
 
+# Handle all the *-defsyms magic.
 include $(src)/defsyms.mk
 
 else
+# This is the main Makefile.
 
 SVNVER := $(shell svnversion 2>/dev/null | grep -o '^[0-9]\+[A-Z]\?')
 GITVER := $(shell git log -1 --pretty=format:"%h" 2>/dev/null)
@@ -63,6 +83,7 @@ VERSION := $(MODVER)$(if $(SVNVER),+$(SVNVER),$(if $(GITVER),+$(GITVER)))
 version-name := hone-$(VERSION)
 tarball-name := $(version-name).tar.gz
 
+# Allow overriding the kernel version and path being built against.
 KVER ?= $(shell uname -r)
 KSRC ?= /lib/modules/$(KVER)/build
 
