@@ -67,7 +67,8 @@ hone_notify-y := hone_notify_imp.o \
 hone_notify-defsyms := 
 
 obj-$(CONFIG_HONEEVENT) += honeevent.o
-honeevent-y := honeevent_imp.o $(call COMBINE,HONE_NOTIFY,$(hone_notify-y))
+honeevent-y := honeevent_imp.o mmutil.o pcapng.o ringbuf.o \
+	$(call COMBINE,HONE_NOTIFY,$(hone_notify-y))
 honeevent-defsyms := uts_sem socket_file_ops get_files_struct put_files_struct
 
 # Handle all the *-defsyms magic.

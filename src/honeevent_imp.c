@@ -19,13 +19,11 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/kfifo.h>
 #include <linux/ctype.h>
 #include <linux/skbuff.h>
 #include <linux/sched.h>
 #include <linux/stringify.h>
 #include <linux/poll.h>
-#include <linux/utsname.h>
 
 #include <linux/fdtable.h>
 
@@ -36,6 +34,8 @@
 #include "hone_notify.h"
 #include "honeevent.h"
 #include "mmutil.h"
+#include "ringbuf.h"
+#include "pcapng.h"
 #include "version.h"
 
 MODULE_DESCRIPTION("Hone event character device.");
@@ -86,68 +86,6 @@ static struct class *class_hone;
 #define printm(level, fmt, ...) printk(level "%s: %s:%d: " fmt, mod_name, __FILE__, __LINE__, ##__VA_ARGS__)
 #define mod_name (THIS_MODULE->name)
 
-#define HONE_USER_HEAD (HONE_USER | 1)
-#define HONE_USER_TAIL (HONE_USER | 2)
-
-#define GUID_FMT "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x"
-#define GUID_TUPLE(G) (G)->data1, (G)->data2, (G)->data3, \
-		(G)->data4[0], (G)->data4[1], (G)->data4[2], (G)->data4[3], \
-		(G)->data4[4], (G)->data4[5], (G)->data4[6], (G)->data4[7]
-
-struct guid_struct {
-	uint32_t data1;
-	uint16_t data2;
-	uint16_t data3;
-	uint8_t  data4[8];
-};
-
-struct ring_buf {
-	atomic_t front;
-	atomic_t back;
-	unsigned int length;
-	unsigned int pageorder;
-	struct hone_event **data;
-};
-
-#define ring_front(ring) ((unsigned int) atomic_read(&(ring)->front))
-#define ring_back(ring) ((unsigned int) atomic_read(&(ring)->back))
-#define ring_used(ring) (ring_back(ring) - ring_front(ring))
-#define ring_is_empty(ring) (ring_front(ring) == ring_back(ring))
-
-static int ring_append(struct ring_buf *ring, struct hone_event *event)
-{
-	unsigned int back;
-
-	for (;;) {
-		back = ring_back(ring);
-		if (back - ring_front(ring) >= ring->length)
-			return -1;
-		if ((unsigned int) atomic_cmpxchg(&ring->back, back, back + 1) == back)
-			break;
-	}
-	ring->data[back % ring->length] = event;
-	return 0;
-}
-
-static struct hone_event *ring_pop(struct ring_buf *ring)
-{
-	struct hone_event *event, **slot;
-	unsigned int front;
-
-	for (;;) {
-		front = ring_front(ring);
-		if (front == ring_back(ring))
-			return NULL;
-		slot = ring->data + (front % ring->length);
-		if (!(event = *slot))
-			continue;
-		if (cmpxchg(slot, event, NULL) == event)
-			break;
-	}
-	atomic_inc(&ring->front);
-	return event;
-}
-
 #define size_of_pages(order) (PAGE_SIZE << (order))
 #define READ_BUFFER_PAGE_ORDER 5
 #define READ_BUFFER_SIZE size_of_pages(READ_BUFFER_PAGE_ORDER)
@@ -159,27 +97,25 @@ static struct hone_event *ring_pop(struct ring_buf *ring)
 #define READER_RESTART 0x0000000F
 #define READER_FILTER_PID 0x00000100
 
+static struct device_info devinfo = {
+	.comment = NULL,
+	.host_guid_is_set = false
+};
+
 struct hone_reader {
 	struct semaphore sem;
 	struct ring_buf ringbuf;
 	struct notifier_block nb;
-	struct timespec boot_time;
-	struct timespec start_time;
-	unsigned int (*format)(struct hone_reader *,
-			struct hone_event *, char *, unsigned int);
+	unsigned int (*format)(const struct device_info *,
+			const struct reader_info *, struct hone_event *, char *, unsigned int);
+	struct reader_info info;
 	atomic_t flags;
-	unsigned int snaplen;
-	struct statistics delivered;
-	struct statistics dropped;
 	struct sock *filter_sk;
-	atomic64_t filtered;
 	struct hone_event *event;
 	unsigned int buflen;
 	char *buf;
 };
 
-static struct guid_struct host_guid;
-static bool host_guid_set = false;
 static DECLARE_WAIT_QUEUE_HEAD(event_wait_queue);
 
 static struct hone_event head_event = {HONE_USER_HEAD, {ATOMIC_INIT(1)}};
@@ -188,7 +124,8 @@ static struct hone_event tail_event = {HONE_USER_TAIL, {ATOMIC_INIT(1)}};
 #define reader_will_block(rdr) (ring_is_empty(&(rdr)->ringbuf) && \
 		!(rdr)->event && !(atomic_read(&(rdr)->flags) & READER_RESTART))
 
-static unsigned int format_as_text(struct hone_reader *reader,
+static unsigned int format_as_text(
+		const struct device_info *devinfo, const struct reader_info *info,
 		struct hone_event *event, char *buf, unsigned int buflen)
 {
 	static const char *event_names[] = {"????", "FORK", "EXEC", "EXIT"};
@@ -291,15 +228,15 @@ static unsigned int format_as_text(struct hone_reader *reader,
 		break;
 	}
 	case HONE_USER_HEAD:
-		if (host_guid_set)
+		if (devinfo->host_guid_is_set)
 			printbuf("%lu.%09lu HEAD %lu.%09lu {" GUID_FMT "}\n",
-					reader->start_time.tv_sec, reader->start_time.tv_nsec,
-					reader->boot_time.tv_sec, reader->boot_time.tv_nsec,
-					GUID_TUPLE(&host_guid));
+					info->start_time.tv_sec, info->start_time.tv_nsec,
+					info->boot_time.tv_sec, info->boot_time.tv_nsec,
+					GUID_TUPLE(&devinfo->host_guid));
 		else
 			printbuf("%lu.%09lu HEAD %lu.%09lu\n",
-					reader->start_time.tv_sec, reader->start_time.tv_nsec,
-					reader->boot_time.tv_sec, reader->boot_time.tv_nsec);
+					info->start_time.tv_sec, info->start_time.tv_nsec,
+					info->boot_time.tv_sec, info->boot_time.tv_nsec);
 		break;
 	default:
 		printbuf("%lu.%09lu ???? %d\n",
@@ -313,471 +250,6 @@ static unsigned int format_as_text(struct hone_reader *reader,
 out_long:
 	snprintf(buf + buflen - 5, 5, "...\n");
 	return buflen;
-}
-
-#define PADLEN(x) (((x) & 0x3) ? 4 - ((x) & 3) : 0)
-#define OPT_SIZE(x) (((x) & 0x3) ? ((((x) >> 2) + 1) << 2) : x)
-#define block_set(BUF, TYPE, VAL) \
-	({ *((TYPE *) (BUF)) = (VAL); sizeof(TYPE); })
-
-static unsigned int block_opt_ptr(char *buf,
-		uint16_t code, const void * ptr, unsigned int length)
-{
-	char *pos = buf;
-	unsigned int padlen = PADLEN(length);
-
-	pos += block_set(pos, uint16_t, code);
-	pos += block_set(pos, uint16_t, length);
-	if (ptr)
-		memcpy(pos, ptr, length);
-	pos += length;
-	memset(pos, 0, padlen);
-	pos += padlen;
-	return (unsigned int) (pos - buf);
-}
-
-#define block_opt_t(BUF, CODE, TYPE, VAL) ({ \
-		TYPE _value = (VAL); \
-		unsigned int _length = block_opt_ptr(BUF, CODE, &_value, sizeof(_value)); \
-		_length; })
-#define block_opt(BUF, CODE, VAL) block_opt_t(BUF, CODE, typeof(VAL), VAL)
-#define block_end_opt(BUF) block_opt_ptr(BUF, 0, NULL, 0)
-
-struct timestamp {
-	uint32_t ts_high;
-	uint32_t ts_low;
-};
-
-static void timespec_to_tstamp(struct timestamp *tstamp, struct timespec *ts)
-{
-	uint64_t val = (((uint64_t) ts->tv_sec) * 1000000LL) + ts->tv_nsec / 1000;
-	tstamp->ts_high = val >> 32;
-	tstamp->ts_low = val & 0xFFFFFFFF;
-}
-
-/* Section Header Block {{{
-  0                   1                   2                   3
-   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +---------------------------------------------------------------+
- 0 |                   Block Type = 0x0A0D0D0A                     |
-   +---------------------------------------------------------------+
- 4 |                      Block Total Length                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8 |                      Byte-Order Magic                         |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-12 |          Major Version        |         Minor Version         |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-16 |                                                               |
-   |                          Section Length                       |
-   |                                                               |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-24 /                                                               /
-   /                      Options (variable)                       /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                      Block Total Length                       |
-   +---------------------------------------------------------------+
-}}} */
-static unsigned int format_sechdr_block(char *buf, unsigned int buflen)
-{
-	char *pos = buf;
-	unsigned int *length_top, *length_end;
-	int n;
-
-	// Be sure to update this value if fields are added below.
-#define SECHDR_BLOCK_MIN_LEN 52
-	if (buflen < SECHDR_BLOCK_MIN_LEN)
-		return 0;
-	pos += block_set(pos, uint32_t, 0x0A0D0D0A);  // block type
-	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);           // block length
-	pos += block_set(pos, uint32_t, 0x1A2B3C4D);  // byte-order magic
-	pos += block_set(pos, uint16_t, 1);           // major version
-	pos += block_set(pos, uint16_t, 0);           // minor version
-	pos += block_set(pos, uint64_t, -1);          // section length
-	if (host_guid_set)
-		pos += block_opt(pos, 257, host_guid);
-	if ((n = buflen - (pos - buf) - 16) > 0) {
-		struct new_utsname *uname;
-		down_read(&uts_sem);
-		uname = utsname();
-		snprintf(pos + 4, n, "%s %s %s %s %s",
-				uname->sysname, uname->nodename, uname->release,
-				uname->version, uname->machine);
-		up_read(&uts_sem);
-		pos[n] = '\0';
-		pos += block_opt_ptr(pos, 3, NULL, strlen(pos + 4));
-	}
-	if (*comment && (n = buflen - (pos - buf) - 16) > 0) {
-		unsigned int i, j;
-		for (i = 0, j = 4; comment[i] && j < n; i++, j++) {
-			if (comment[i] == '\\' && (!strncmp(comment + i + 1, "040", 3) ||
-						!strncmp(comment + i + 1, "x20", 3))) {
-				pos[j] = ' ';
-				i += 3;
-			} else
-				pos[j] = comment[i];
-		}
-		if ((n = j - 4))
-			pos += block_opt_ptr(pos, 1, NULL, n);
-	}
-	pos += block_end_opt(pos);
-	length_end = (typeof(length_end)) pos;
-	pos += block_set(pos, uint32_t, 0);
-	*length_top = *length_end = (unsigned int) (pos - buf);
-	return *length_top;
-}
-
-/* Interface Description Block {{{
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +---------------------------------------------------------------+
- 0 |                    Block Type = 0x00000001                    |
-   +---------------------------------------------------------------+
- 4 |                      Block Total Length                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8 |           LinkType            |           Reserved            |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-12 |                            SnapLen                            |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-16 /                                                               /
-   /                      Options (variable)                       /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                      Block Total Length                       |
-   +---------------------------------------------------------------+
-}}} */	
-static unsigned int format_ifdesc_block(struct hone_reader *reader,
-		char *buf, int buflen)
-{
-	static const char *if_desc = "Hone Capture Pseudo-device";
-	char *pos = buf;
-	unsigned int *length_top, *length_end;
-
-	// Be sure to update this value if fields are added below.
-#define IFDESC_BLOCK_MIN_LEN 56
-	if (buflen < IFDESC_BLOCK_MIN_LEN)
-		return 0;
-	pos += block_set(pos, uint32_t, 0x00000001);  // block type
-	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);    // block length
-	pos += block_set(pos, uint16_t, 101);  // link type
-	pos += block_set(pos, uint16_t, 0);    // reserved
-	pos += block_set(pos, uint32_t, reader->snaplen);  // snaplen
-	pos += block_opt_ptr(pos, 3, if_desc, strlen(if_desc));  // if_description
-	pos += block_end_opt(pos);
-	length_end = (typeof(length_end)) pos;
-	pos += block_set(pos, uint32_t, 0);
-	*length_top = *length_end = (unsigned int) (pos - buf);
-	return *length_top;
-}
-
-/* Interface Statistics Block {{{
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +---------------------------------------------------------------+
- 0 |                   Block Type = 0x00000005                     |
-   +---------------------------------------------------------------+
- 4 |                      Block Total Length                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8 |                         Interface ID                          |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-12 |                        Timestamp (High)                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-16 |                        Timestamp (Low)                        |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-20 /                                                               /
-   /                      Options (variable)                       /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                      Block Total Length                       |
-   +---------------------------------------------------------------+
-}}} */	
-static unsigned int format_ifstats_block(struct hone_reader *reader,
-		char *buf, int buflen)
-{
-	char *pos = buf;
-	unsigned int *length_top, *length_end;
-	struct timespec ts;
-	struct timestamp tstamp, start_time;
-	struct statistics received, dropped;
-
-	get_hone_statistics(&received, &dropped, &ts);
-	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
-			reader->boot_time.tv_nsec + ts.tv_nsec);
-	timespec_to_tstamp(&start_time, &ts);
-	ktime_get_ts(&ts);
-	set_normalized_timespec(&ts, reader->boot_time.tv_sec + ts.tv_sec,
-			reader->boot_time.tv_nsec + ts.tv_nsec);
-	timespec_to_tstamp(&tstamp, &ts);
-	// Be sure to update this value if fields are added below.
-#define IFSTATS_BLOCK_MIN_LEN 56
-	if (buflen < IFDESC_BLOCK_MIN_LEN)
-		return 0;
-	pos += block_set(pos, uint32_t, 0x00000005);              // block type
-	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);                       // block length
-	pos += block_set(pos, uint32_t, 0);                       // interface ID
-	pos += block_set(pos, struct timestamp, tstamp);          // timestamp
-	pos += block_opt_t(pos, 2, struct timestamp, start_time); // start time
-	pos += block_opt_t(pos, 4, uint64_t, atomic64_read(&received.packet));
-	pos += block_opt_t(pos, 5, uint64_t, atomic64_read(&dropped.packet));
-	pos += block_opt_t(pos, 6, uint64_t, atomic64_read(&reader->filtered));
-	pos += block_opt_t(pos, 7, uint64_t, atomic64_read(&reader->dropped.packet));
-	pos += block_opt_t(pos, 8, uint64_t, atomic64_read(&reader->delivered.packet));
-	pos += block_opt_t(pos, 257, uint64_t, atomic64_read(&received.process));
-	pos += block_opt_t(pos, 258, uint64_t, atomic64_read(&dropped.process));
-	pos += block_opt_t(pos, 259, uint64_t, atomic64_read(&reader->dropped.process));
-	pos += block_opt_t(pos, 260, uint64_t, atomic64_read(&reader->delivered.process));
-	pos += block_opt_t(pos, 261, uint64_t, atomic64_read(&received.socket));
-	pos += block_opt_t(pos, 262, uint64_t, atomic64_read(&dropped.socket));
-	pos += block_opt_t(pos, 263, uint64_t, atomic64_read(&reader->dropped.socket));
-	pos += block_opt_t(pos, 264, uint64_t, atomic64_read(&reader->delivered.socket));
-	pos += block_end_opt(pos);
-	length_end = (typeof(length_end)) pos;
-	pos += block_set(pos, uint32_t, 0);
-	*length_top = *length_end = (unsigned int) (pos - buf);
-	return *length_top;
-}
-
-static inline unsigned int maxoptlen(int buflen, unsigned int length)
-{
-	unsigned int alignlen = ((buflen - 16) >> 2) << 2;
-	if (unlikely(buflen < 0))
-		return 0;
-	return alignlen < length ? alignlen : length;
-}
-
-/* Process Event Block {{{
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +---------------------------------------------------------------+
- 0 |                    Block Type = 0x00000101                    |
-   +---------------------------------------------------------------+
- 4 |                      Block Total Length                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8 |                          Process ID                           |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-12 |                        Timestamp (High)                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-16 |                        Timestamp (Low)                        |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-20 /                                                               /
-   /                      Options (variable)                       /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                      Block Total Length                       |
-   +---------------------------------------------------------------+
-}}} */
-static size_t format_process_block(struct process_event *event,
-		struct timestamp *tstamp, char *buf, size_t buflen)
-{
-	char *pos = buf;
-	unsigned int *length_top, *length_end; //, length;
-
-	// Be sure to update this value if fields are added below.
-#define PROCESS_BLOCK_MIN_LEN 56
-	if (buflen < PROCESS_BLOCK_MIN_LEN)
-		return 0;
-	pos += block_set(pos, uint32_t, 0x00000101);     // block type
-	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);              // block length
-	pos += block_set(pos, uint32_t, event->tgid);    // PID
-	pos += block_set(pos, struct timestamp, *tstamp); // timestamp
-	if (event->event != PROC_EXEC)
-		pos += block_opt_t(pos, 2, uint32_t, (event->event == PROC_FORK ? 1 : -1));
-	pos += block_opt_t(pos, 5, uint32_t, event->ppid);
-	pos += block_opt_t(pos, 6, uint32_t, event->uid);
-	pos += block_opt_t(pos, 7, uint32_t, event->gid);
-	if (event->mm) {
-		char *tmp, *ptr;
-		unsigned int n, length;
-		ptr = pos + 4;
-		length = buflen - (pos - buf) - 16;
-		if (length > 0 && (tmp = mm_path(event->mm, ptr, length))) {
-			if ((length = maxoptlen(length, strlen(tmp)))) {
-				memmove(ptr, tmp, length);
-				pos += block_opt_ptr(pos, 3, NULL, length);
-			}
-		}
-		ptr = pos + 4;
-		length = buflen - (pos - buf) - 16;
-		if (length > 0 && (n = mm_argv(event->mm, ptr, length)))
-			pos += block_opt_ptr(pos, 4, NULL, maxoptlen(length, n));
-	}
-	pos += block_end_opt(pos);
-	length_end = (typeof(length_end)) pos;
-	pos += block_set(pos, uint32_t, 0);
-	*length_top = *length_end = (unsigned int) (pos - buf);
-	return *length_top;
-}
-
-/* Connection Event Block {{{
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +---------------------------------------------------------------+
- 0 |                    Block Type = 0x00000102                    |
-   +---------------------------------------------------------------+
- 4 |                      Block Total Length                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8 |                        Connection ID                          |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-12 |                          Process ID                           |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-16 |                        Timestamp (High)                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-20 |                        Timestamp (Low)                        |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-24 /                                                               /
-   /                      Options (variable)                       /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                      Block Total Length                       |
-   +---------------------------------------------------------------+
-}}} */
-static size_t format_connection_block(struct socket_event *event,
-		struct timestamp *tstamp, char *buf, size_t buflen)
-{
-	char *pos = buf;
-	unsigned int *length_top, *length_end;
-
-	// Be sure to update this value if fields are added below.
-#define CONNECTION_BLOCK_MIN_LEN 40
-	if (buflen < CONNECTION_BLOCK_MIN_LEN)
-		return 0;
-	pos += block_set(pos, uint32_t, 0x00000102);  // block type
-	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);           // block length
-	pos += block_set(pos, uint32_t, event->sock & 0xFFFFFFFF); // connection id
-	pos += block_set(pos, uint32_t, event->tgid); // PID
-	pos += block_set(pos, struct timestamp, *tstamp); // timestamp
-	if (event->event) {
-		pos += block_opt_t(pos, 2, uint32_t, -1);
-		pos += block_end_opt(pos);
-	}
-	length_end = (typeof(length_end)) pos;
-	pos += block_set(pos, uint32_t, 0);
-	*length_top = *length_end = (unsigned int) (pos - buf);
-	return *length_top;
-}
-
-/* Enhanced Packet Block {{{
-   0                   1                   2                   3
-   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-   +---------------------------------------------------------------+
- 0 |                    Block Type = 0x00000006                    |
-   +---------------------------------------------------------------+
- 4 |                      Block Total Length                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- 8 |                         Interface ID                          |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-12 |                        Timestamp (High)                       |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-16 |                        Timestamp (Low)                        |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-20 |                         Captured Len                          |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-24 |                          Packet Len                           |
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-28 /                                                               /
-   /                          Packet Data                          /
-   /           ( variable length, aligned to 32 bits )             /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   /                                                               /
-   /                      Options (variable)                       /
-   /                                                               /
-   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                      Block Total Length                       |
-   +---------------------------------------------------------------+
-}}} */
-static size_t format_packet_block(struct packet_event *event,
-		unsigned int snaplen, struct timestamp *tstamp, char *buf, size_t buflen)
-{
-	char *pos = buf;
-	unsigned int *length_top, *length_end, *length_cap;
-	struct sk_buff *skb = event->skb;
-
-	// Be sure to update this value if fields are added below.
-#define PACKET_BLOCK_MIN_LEN 52
-	if (buflen < PACKET_BLOCK_MIN_LEN)
-		return 0;
-	pos += block_set(pos, uint32_t, 0x00000006);  // block type
-	length_top = (typeof(length_top)) pos;
-	pos += block_set(pos, uint32_t, 0);           // block length
-	pos += block_set(pos, uint32_t, 0);           // interface ID
-	pos += block_set(pos, struct timestamp, *tstamp); // timestamp
-	length_cap = (typeof(length_cap)) pos;
-	pos += block_set(pos, uint32_t, 0);           // captured length
-	pos += block_set(pos, uint32_t, skb->len);    // packet length
-
-	// packet data
-	if ((*length_cap = maxoptlen(buflen - (pos - buf),
-					(snaplen ? min(skb->len, snaplen) : skb->len)))) {
-		unsigned int n = *length_cap & 3 ? 4 - (*length_cap & 3) : 0;
-		if (skb_copy_bits(skb, 0, pos, *length_cap))
-			BUG();
-		pos += *length_cap;
-		memset(pos, 0, n);
-		pos += n;
-	}
-
-	// socket id
-	if (event->sock)  // Only add the option if we found a socket
-		pos += block_opt_t(pos, 257, uint32_t, event->sock & 0xFFFFFFFF);
-	// process id
-	if (event->pid)
-		pos += block_opt_t(pos, 258, uint32_t, event->pid);
-	pos += block_opt_t(pos, 2, uint32_t, event->dir ? 1 : 2);
-	pos += block_end_opt(pos);
-	length_end = (typeof(length_end)) pos;
-	pos += block_set(pos, uint32_t, 0);
-	*length_top = *length_end = (unsigned int) (pos - buf);
-	return *length_top;
-}
-
-static void normalize_ts(struct timestamp *tstamp,
-		struct timespec *boot_time, struct timespec *event_time)
-{
-	struct timespec ts;
-
-	// The following is used instead of timespec_add()
-	// because it doesn't exist in older kernel versions.
-	set_normalized_timespec(&ts, boot_time->tv_sec + event_time->tv_sec,
-			boot_time->tv_nsec + event_time->tv_nsec);
-	timespec_to_tstamp(tstamp, &ts);
-}
-
-static unsigned int format_as_pcapng(struct hone_reader *reader,
-		struct hone_event *event, char *buf, unsigned int buflen)
-{
-	unsigned int n = 0;
-	struct timestamp tstamp;
-
-	switch (event->type) {
-	case HONE_PACKET:
-		normalize_ts(&tstamp, &reader->boot_time, &event->ts);
-		n = format_packet_block(
-				&event->packet, reader->snaplen, &tstamp, buf, buflen);
-		break;
-	case HONE_PROCESS:
-		normalize_ts(&tstamp, &reader->boot_time, &event->ts);
-		n = format_process_block(&event->process, &tstamp, buf, buflen);
-		break;
-	case HONE_SOCKET:
-		normalize_ts(&tstamp, &reader->boot_time, &event->ts);
-		n = format_connection_block(&event->socket, &tstamp, buf, buflen);
-		break;
-	case HONE_USER_HEAD:
-		n = format_sechdr_block(buf, buflen);
-		n += format_ifdesc_block(reader, buf + n, buflen - n);
-		break;
-	case HONE_USER_TAIL:
-		n = format_ifstats_block(reader, buf + n, buflen - n);
-		break;
-	}
-
-	return n;
 }
 
 static void inc_stats_counter(struct statistics *stats, int type)
@@ -809,12 +281,12 @@ static void inline enqueue_event(struct hone_reader *reader,
 	// Filter out packets for local socket, if set
 	if (event->type == HONE_PACKET && reader->filter_sk &&
 			event->packet.sock == (unsigned long) reader->filter_sk) {
-		atomic64_inc(&reader->filtered);
+		atomic64_inc(&reader->info.filtered);
 		return;
 	}
 	get_hone_event(event);
 	if (ring_append(&reader->ringbuf, event)) {
-		inc_stats_counter(&reader->dropped, event->type);
+		inc_stats_counter(&reader->info.dropped, event->type);
 		put_hone_event(event);
 	}
 }
@@ -917,7 +389,7 @@ static struct hone_event *__add_files(struct hone_reader *reader,
 				event = sk_event;
 				event->ts = task->start_time;
 			} else {
-				atomic64_inc(&reader->dropped.socket);
+				atomic64_inc(&reader->info.dropped.socket);
 			}
 		}
 	}
@@ -949,7 +421,7 @@ static struct hone_event *add_current_tasks(
 			event = proc_event;
 			event->ts = task->start_time;
 		} else {
-			atomic64_inc(&reader->dropped.process);
+			atomic64_inc(&reader->info.dropped.process);
 		}
 	}
 	rcu_read_unlock();
@@ -985,10 +457,10 @@ static int hone_open(struct inode *inode, struct file *file)
 	if (iminor(inode) == 1)
 		reader->format = format_as_text;
 	file->private_data = reader;
-	getboottime(&reader->boot_time);
-	ktime_get_ts(&reader->start_time);
-	init_statistics(&reader->delivered);
-	init_statistics(&reader->dropped);
+	getboottime(&reader->info.boot_time);
+	ktime_get_ts(&reader->info.start_time);
+	init_statistics(&reader->info.delivered);
+	init_statistics(&reader->info.dropped);
 	reader->nb.notifier_call = hone_event_handler;
 	if ((err = hone_notifier_register(&reader->nb))) {
 		printm(KERN_ERR, "hone_notifier_register() failed with error %d\n", err);
@@ -1087,9 +559,9 @@ try_sleep:
 
 			if (!event)
 				break;
-			reader->buflen = reader->format(reader,
+			reader->buflen = reader->format(&devinfo, &reader->info,
 					event, reader->buf, READ_BUFFER_SIZE);
-			inc_stats_counter(&reader->delivered, event->type);
+			inc_stats_counter(&reader->info.delivered, event->type);
 			if (free_event)
 				free_event(event);
 		}
@@ -1137,9 +609,9 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 	case HEIO_GET_AT_HEAD:
 		return atomic_read(&reader->flags) & READER_HEAD ? 1 : 0;
 	case HEIO_GET_SNAPLEN:
-		return put_user(reader->snaplen, (unsigned int __user *) param);
+		return put_user(reader->info.snaplen, (unsigned int __user *) param);
 	case HEIO_SET_SNAPLEN:
-		reader->snaplen = (unsigned int) param;
+		reader->info.snaplen = (unsigned int) param;
 		atomic_set_mask(READER_HEAD, &reader->flags);
 		return 0;
 	case HEIO_SET_FILTER_SOCK:
@@ -1199,51 +671,6 @@ static const struct file_operations device_ops = {
 	.poll = hone_poll,
 };
 
-static int __init parse_guid(struct guid_struct *guid, const char *input)
-{
-	int i, val;
-	const char *pos = input;
-	char *buf = (typeof(buf)) guid;
-
-	if (*pos == '{')
-		pos++;
-	for (i = 0; *pos && i < 32; pos++) {
-		if (*pos == '-') {
-			if (pos == input)
-				return -1;
-			continue;
-		}
-		if (*pos >= '0' && *pos <= '9')
-			val = *pos - '0';
-		else if (*pos >= 'a' && *pos <= 'f')
-			val = *pos - 'W';
-		else if (*pos >= 'A' && *pos <= 'F')
-			val = *pos - '7';
-		else
-			return -1;
-		if (i % 2) {
-			buf[i / 2] += val;
-			i++;
-		} else {
-			buf[i / 2] = val << 4;
-			i++;
-		}
-	}
-	if (i < 32)
-		return -1;
-	if (*input == '{') {
-		if (*pos != '}')
-			return -1;
-		pos++;
-	}
-	if (*pos)
-		return -1;
-	guid->data1 = ntohl(guid->data1);
-	guid->data2 = ntohs(guid->data2);
-	guid->data3 = ntohs(guid->data3);
-	return 0;
-}
-
 #ifdef CONFIG_HONE_NOTIFY_COMBINED
 	int hone_notify_init(void) __init;
 	void hone_notify_release(void);
@@ -1257,14 +684,16 @@ static int __init honeevent_init(void)
 	int err;
 
 	if (hostid && *hostid) {
-		if (parse_guid(&host_guid, hostid)) {
+		if (parse_guid(&devinfo.host_guid, hostid)) {
 			printm(KERN_ERR, "invalid host GUID provided\n");
 			return -1;
 		}
 		printm(KERN_DEBUG, "using host GUID {" GUID_FMT "}\n",
-				GUID_TUPLE(&host_guid));
-		host_guid_set = true;
+				GUID_TUPLE(&devinfo.host_guid));
+		devinfo.host_guid_is_set = true;
 	}
+	if (comment && *comment)
+		devinfo.comment = comment;
 	if ((err = hone_notify_init()))
 		return -1;
 	if ((err = register_chrdev(major, devname, &device_ops)) < 0) {

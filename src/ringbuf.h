@@ -12,17 +12,29 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * Much of the code below is based on procfs code.
  */
 
-#ifndef _MMUTIL_H
-#define _MMUTIL_H
 
-#include <linux/mm_types.h>
+#ifndef _RINGBUF_H
+#define _RINGBUF_H
 
-char *mm_path(struct mm_struct *mm, char *buf, int buflen);
-int mm_argv(struct mm_struct *mm, char *buf, int buflen);
+#include <linux/types.h>
 
-#endif /* _MMUTIL_H */
+struct ring_buf {
+	atomic_t front;
+	atomic_t back;
+	unsigned int length;
+	unsigned int pageorder;
+	void **data;
+};
+
+#define ring_front(ring) ((unsigned int) atomic_read(&(ring)->front))
+#define ring_back(ring) ((unsigned int) atomic_read(&(ring)->back))
+#define ring_used(ring) (ring_back(ring) - ring_front(ring))
+#define ring_is_empty(ring) (ring_front(ring) == ring_back(ring))
+
+int ring_append(struct ring_buf *ring, void *elem);
+void *ring_pop(struct ring_buf *ring);
+
+#endif /* _RINGBUF_H */
 
