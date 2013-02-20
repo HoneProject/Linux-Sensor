@@ -39,6 +39,7 @@ struct guid_struct {
 struct device_info {
 	struct guid_struct host_guid;
 	bool host_guid_is_set;
+	const char *host_id;
 	const char *comment;
 };
 

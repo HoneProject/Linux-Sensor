@@ -55,6 +55,12 @@ module_param(major, int, S_IRUGO);
 MODULE_PARM_DESC(major, "The major number to give the device.  "
 		"If 0 (the default), the major number is automatically assigned by the kernel.");
 
+static char hostid_type = 0;
+module_param(hostid_type, byte, S_IRUGO);
+MODULE_PARM_DESC(hostid_type,
+		"An integer describing how to interpret the value of hostid.  0 (the "
+		"default) means hostid is a string while 1 means it is a GUID.");
+
 static char *hostid = "";
 module_param(hostid, charp, S_IRUGO);
 MODULE_PARM_DESC(hostid,
@@ -99,6 +105,7 @@ static struct class *class_hone;
 
 static struct device_info devinfo = {
 	.comment = NULL,
+	.host_id = NULL,
 	.host_guid_is_set = false
 };
 
@@ -684,13 +691,20 @@ static int __init honeevent_init(void)
 	int err;
 
 	if (hostid && *hostid) {
-		if (parse_guid(&devinfo.host_guid, hostid)) {
-			printm(KERN_ERR, "invalid host GUID provided\n");
+		if (!hostid_type)
+			devinfo.host_id = hostid;
+		else if (hostid_type == 1) {
+			if (parse_guid(&devinfo.host_guid, hostid)) {
+				printm(KERN_ERR, "invalid host GUID: %s\n", hostid);
+				return -1;
+			}
+			printm(KERN_DEBUG, "using host GUID {" GUID_FMT "}\n",
+					GUID_TUPLE(&devinfo.host_guid));
+			devinfo.host_guid_is_set = true;
+		} else {
+			printm(KERN_ERR, "invalid hostid_type: %d\n", hostid_type);
 			return -1;
 		}
-		printm(KERN_DEBUG, "using host GUID {" GUID_FMT "}\n",
-				GUID_TUPLE(&devinfo.host_guid));
-		devinfo.host_guid_is_set = true;
 	}
 	if (comment && *comment)
 		devinfo.comment = comment;

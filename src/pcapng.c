@@ -95,12 +95,13 @@ static void timespec_to_tstamp(struct timestamp *tstamp, struct timespec *ts)
 static unsigned int format_sechdr_block(const struct device_info *devinfo,
 		char *buf, unsigned int buflen)
 {
+	static const char *user_app = "Hone " HONE_VERSION;
 	char *pos = buf;
 	unsigned int *length_top, *length_end;
 	int n;
 
 	// Be sure to update this value if fields are added below.
-#define SECHDR_BLOCK_MIN_LEN 52
+#define SECHDR_BLOCK_MIN_LEN 56
 	if (buflen < SECHDR_BLOCK_MIN_LEN)
 		return 0;
 	pos += block_set(pos, uint32_t, 0x0A0D0D0A);  // block type
@@ -110,8 +111,14 @@ static unsigned int format_sechdr_block(const struct device_info *devinfo,
 	pos += block_set(pos, uint16_t, 1);           // major version
 	pos += block_set(pos, uint16_t, 0);           // minor version
 	pos += block_set(pos, uint64_t, -1);          // section length
-	if (devinfo->host_guid_is_set)
-		pos += block_opt(pos, 257, devinfo->host_guid);
+	if (devinfo->host_id && (n = buflen - (pos - buf) - 16) > 0) {
+		snprintf(pos + 4, n, "%c%s", 0, devinfo->host_id);
+		pos += block_opt_ptr(pos, 257, NULL, strlen(pos + 5) + 1);
+	} else if (devinfo->host_guid_is_set) {
+		memcpy(pos + 4, "\x01\x00\x00\x00", 4);
+		memcpy(pos + 8, &devinfo->host_guid, sizeof(devinfo->host_guid));
+		pos += block_opt_ptr(pos, 257, NULL, 20);
+	}
 	if ((n = buflen - (pos - buf) - 16) > 0) {
 		struct new_utsname *uname;
 		down_read(&uts_sem);
@@ -123,10 +130,9 @@ static unsigned int format_sechdr_block(const struct device_info *devinfo,
 		pos[n] = '\0';
 		pos += block_opt_ptr(pos, 3, NULL, strlen(pos + 4));
 	}
-	snprintf(pos + 4, n, "Hone " HONE_VERSION);
-	pos[n] = '\0';
-	pos += block_opt_ptr(pos, 4, NULL, strlen(pos + 4));
-	if (*devinfo->comment && (n = buflen - (pos - buf) - 16) > 0) {
+	if ((n = buflen - (pos - buf) - 16) > 0)
+		pos += block_opt_ptr(pos, 4, user_app, min(n, (typeof(n)) strlen(user_app)));
+	if (devinfo->comment && (n = buflen - (pos - buf) - 16) > 0) {
 		unsigned int i, j;
 		for (i = 0, j = 4; devinfo->comment[i] && j < n; i++, j++) {
 			if (devinfo->comment[i] == '\\' &&
