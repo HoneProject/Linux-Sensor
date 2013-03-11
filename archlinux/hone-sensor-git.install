@@ -1,13 +1,17 @@
 post_install() {
   depmod -a
+  getent group hone > /dev/null || groupadd --system hone
 }
 
 post_upgrade() {
-  post_install
+  depmod -a
 }
 
 post_remove() {
-  post_install
+  depmod -a
+  if getent group hone > /dev/null; then
+    echo "Not removing 'hone' group."
+  fi
 }
 
 # vim:set ts=2 sw=2 et:

@@ -1,18 +1,24 @@
 _gitname=hone-sensor
 pkgname=$_gitname-git
-pkgver=20120419
+pkgver=20130311
 pkgrel=1
 pkgdesc="Hone device driver for correlating captured packets to processes"
 arch=(i686 x86_64)
 url="https://github.com/HoneProject/Linux-Sensor"
 license=('GPL')
+makedepends=('git')
+backup=('etc/udev/rules.d/60-hone.rules')
 options=('!strip')
 install="$pkgname.install"
 source=("$pkgname.install")
-md5sums=('baed13cb800dd802a3fc2035afb581d8')
+md5sums=('fbaf3fe6b3da0896c75be30d36dd149a')
 
 
 _gitroot="https://github.com/HoneProject/Linux-Sensor.git"
+if [[ -n "$LOCAL_HONE_BUILD" ]]; then
+  echo "Cloning from local filesystem"
+  _gitroot="file://$PWD/.."
+fi
 
 build() {
   cd "$srcdir"
@@ -42,6 +48,10 @@ build() {
 package() {
   cd "$srcdir/$_gitname-build/src"
   make INSTALL_MOD_PATH="$pkgdir/" modules_install
+  install -d "$pkgdir/etc/udev/rules.d"
+  install -d "$pkgdir/usr/share/doc/hone"
+  install -m 0644 udev.rules "$pkgdir/etc/udev/rules.d/60-hone.rules"
+  install -m 0444 README "$pkgdir/usr/share/doc/hone/README"
 }
 
 # vim:set ts=2 sw=2 et:
