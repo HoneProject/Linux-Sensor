@@ -14,6 +14,7 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/kprobes.h>
@@ -83,13 +84,22 @@ static int exit_handler(struct kprobe *kp, struct pt_regs *regs)
 }
 
 extern void copy_process(void);
-extern void compat_do_execve(void);
-
 static struct kretprobe fork_kretprobe = {
 	//.kp.symbol_name = "copy_process",
 	.kp.addr = (kprobe_opcode_t *) copy_process,
 	.handler = fork_handler,
 };
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+
+extern int do_execve_common(void);
+static struct kretprobe exec_kretprobe = {
+	//.kp.symbol_name = "do_execve",
+	.kp.addr = (kprobe_opcode_t *) do_execve_common,
+	.handler = exec_handler,
+};
+
+#else
 
 static struct kretprobe exec_kretprobe = {
 	//.kp.symbol_name = "do_execve",
@@ -98,12 +108,16 @@ static struct kretprobe exec_kretprobe = {
 };
 
 #ifdef CONFIG_COMPAT
+#define PROBE_COMPAT_DO_EXECVE
+extern void compat_do_execve(void);
 static struct kretprobe compat_exec_kretprobe = {
 	//.kp.symbol_name = "compat_do_execve",
 	.kp.addr = (kprobe_opcode_t *) compat_do_execve,
 	.handler = exec_handler,
 };
 #endif
+
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0) */
 
 static struct kprobe exit_kprobe = {
 	//.symbol_name = "do_exit",
@@ -136,7 +150,7 @@ _STATIC int __init process_notify_init(void)
 				THIS_MODULE->name, err);
 		goto exec_failed;
 	}
-#ifdef CONFIG_COMPAT
+#ifdef PROBE_COMPAT_DO_EXECVE
 	if ((err = register_kretprobe(&compat_exec_kretprobe))) {
 		printk(KERN_ERR "%s: compat_exec register_kretprobe() failed with error %d\n",
 				THIS_MODULE->name, err);
@@ -146,7 +160,7 @@ _STATIC int __init process_notify_init(void)
 #endif
 	return 0;
 
-#ifdef CONFIG_COMPAT
+#ifdef PROBE_COMPAT_DO_EXECVE
 compat_exec_failed:
 	unregister_kretprobe(&exec_kretprobe);
 #endif
@@ -160,7 +174,7 @@ exit_failed:
 
 _STATIC void process_notify_remove(void)
 {
-#ifdef CONFIG_COMPAT
+#ifdef PROBE_COMPAT_DO_EXECVE
 	unregister_kretprobe(&compat_exec_kretprobe);
 #endif
 	unregister_kretprobe(&exec_kretprobe);

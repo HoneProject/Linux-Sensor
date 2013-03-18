@@ -44,7 +44,7 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION(HONE_VERSION);
 MODULE_ALIAS("hone");
 
-static char version[] __devinitdata = HONE_VERSION;
+static char version[] __initdata = HONE_VERSION;
 
 static char *devname = "hone";
 module_param(devname, charp, S_IRUGO);

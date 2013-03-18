@@ -308,8 +308,9 @@ static int extract_icmp6_fields(const struct sk_buff *skb,
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0)
 int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
-		  int target, unsigned short *fragoff)
+		  int target, unsigned short *fragoff, int *fragflg)
 {
 	unsigned int start = skb_network_offset(skb) + sizeof(struct ipv6hdr);
 	u8 nexthdr = ipv6_hdr(skb)->nexthdr;
@@ -367,6 +368,7 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 	*offset = start;
 	return nexthdr;
 }
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0) */
 
 #  if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
 extern struct sock *__udp6_lib_lookup(struct net *net,
@@ -454,7 +456,7 @@ static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 	__be16 dport, sport;
 	int thoff, tproto;
 
-	tproto = ipv6_find_hdr(skb, &thoff, -1, NULL);
+	tproto = ipv6_find_hdr(skb, &thoff, -1, NULL, NULL);
 	if (tproto < 0)
 		// unable to find transport header in IPv6 packet
 		return NULL;
