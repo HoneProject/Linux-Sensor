@@ -14,9 +14,6 @@
 # GNU General Public License for more details.
 #
 
-ifneq ($(KERNELRELEASE),)
-# This is the kernel build (Kbuild) section.
-
 # Each of the *_NOTIFY variables below can take one of three values:
 #   c - Combine the module with the dependent rather than build separate
 #   m - Build as a separate module
@@ -34,6 +31,11 @@ CONFIG_PACKET_NOTIFY ?= c
 CONFIG_PROCESS_NOTIFY ?= c
 CONFIG_HONE_NOTIFY ?= m
 CONFIG_HONEEVENT ?= m
+
+HONE_MODULES ?= $(foreach m,socket_notify packet_notify process_notify hone_notify honeevent,$(if $(filter m,$(value CONFIG_$(shell echo '$(m)' | tr '[[:lower:]]' '[[:upper:]]'))),$(m)))
+
+ifneq ($(KERNELRELEASE),)
+# This is the kernel build (Kbuild) section.
 
 # Since hone is being built out of tree, the CONFIG_* variables are not set.
 # The following lines set the variables via the compiler command-line.
@@ -79,8 +81,8 @@ else
 
 SVNVER := $(shell svnversion 2>/dev/null | grep -o '^[0-9]\+[A-Z]\?')
 GITVER := $(shell git log -1 --pretty=format:"%h" 2>/dev/null)
-MODVER := $(shell [ -f VERSION ] && cat VERSION || date '+%y.%m')
-VERSION := $(MODVER)$(if $(SVNVER),+$(SVNVER),$(if $(GITVER),+$(GITVER)))
+BASEVER := $(shell [ -f VERSION ] && cat VERSION || date '+%y.%m')
+VERSION := $(BASEVER)$(if $(SVNVER),+$(SVNVER),$(if $(GITVER),+$(GITVER)))
 version-name := hone-$(VERSION)
 tarball-name := $(version-name).tar.gz
 
@@ -89,7 +91,7 @@ KVER ?= $(shell uname -r)
 KSRC ?= /lib/modules/$(KVER)/build
 
 hone-source = Makefile defsyms.mk $(filter-out %.mod.c,$(wildcard *.[ch]))
-pkg-source = dkms.conf.in dkms.conf LICENSE README VERSION debian/* hone.spec.in hone.spec
+pkg-source = dkms.conf LICENSE README VERSION debian/* hone.spec.in hone.spec version.h
 clean-files = dkms.conf hone.spec ioctl-list.c version.h
 pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//' || sed -r '2,$d;s/^.*\((.*)\).*$/\1/' debian/changelog)
 
@@ -101,15 +103,15 @@ tags: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
 TAGS: $(filter %.c,$(hone-source)) $(filter %.h,$(hone-source))
 	etags $^
 
-VER_NUMBER := $(firstword $(subst -, ,$(MODVER)))
-VER_EXTRA := $(subst $(VER_NUMBER),,$(MODVER))
+VER_NUMBER := $(firstword $(subst -, ,$(BASEVER)))
+VER_EXTRA := $(subst $(VER_NUMBER),,$(BASEVER))
 VER_SPLIT := $(subst ., ,$(VER_NUMBER))
 VER_MAJOR := $(word 1,$(VER_SPLIT))
 VER_MINOR := $(word 2,$(VER_SPLIT))
 VER_MICRO := $(word 3,$(VER_SPLIT))
 VER_BUILD := $(word 4,$(VER_SPLIT))
 
-bump:
+bump-version:
 	@eval `date '+YEAR=%y MONTH=%m DAY=%d'`; \
 	VERSION="$$YEAR.$$MONTH"; \
 	if [ "$$VERSION" == "$(VER_MAJOR).$(VER_MINOR)" ]; then \
@@ -118,10 +120,13 @@ bump:
 	    VERSION="$$VERSION.$$(( $(VER_BUILD) + 1 ))"; \
 	  fi; \
 	fi; \
-	echo $${VERSION}$(VER_EXTRA) > VERSION
+	echo $${VERSION}$(VER_EXTRA) > $@
 
 version.h: VERSION
-	@echo -e '#ifndef __VERSION_H__\n#define __VERSION_H__\n#define HONE_VERSION "$(MODVER)"\n#endif' > $@
+	@echo '#ifndef __VERSION_H__' > $@
+	@echo '#define __VERSION_H__' >> $@
+	@echo '#define HONE_VERSION "$(BASEVER)"' >> $@
+	@echo '#endif' >> $@
 
 prereq_check:
 	@ if [ ! -f $(KSRC)/include/linux/version.h ] && \
@@ -147,16 +152,22 @@ clean:
 distclean: clean
 	-rm -f $(clean-files)
 
-snapshot-changelog:
-	@if [ "$(call pkg-version)" != "$(VERSION)" ]; then \
-	  echo "hone ($(VERSION)) unstable; urgency=low" > debian/changelog.new; \
-	  echo "" >> debian/changelog.new; \
-	  echo "  * New snapshot release." >> debian/changelog.new; \
-	  echo "" >> debian/changelog.new; \
+debian/dkms: dkms.conf
+	@cp $< $@
+
+debian/install: debian/install.in VERSION
+	@sed -r 's/__VERSION__/$(BASEVER)/' $< > $@
+
+debian/changelog: VERSION
+	@if [ "$(call pkg-version)" != "$(BASEVER)" ]; then \
+	  echo "hone ($(BASEVER)) unstable; urgency=low" > $@.new; \
+	  echo "" >> $@.new; \
+	  echo "  * New snapshot release." >> $@.new; \
+	  echo "" >> $@.new; \
 	  echo " -- $${DEBFULLNAME:-$$USER} <$${DEBEMAIL:-$$USER@$$HOSTNAME}>  `date -R`" >> debian/changelog.new; \
-	  echo "" >> debian/changelog.new; \
-	  cat debian/changelog >> debian/changelog.new; \
-	  mv -f debian/changelog.new debian/changelog; \
+	  echo "" >> $@.new; \
+	  cat debian/changelog >> $@.new; \
+	  mv -f $@.new $@; \
 	 fi
 
 packages: deb rpm tarball
@@ -174,14 +185,22 @@ rpm: $(tarball-name)
 
 tarball: $(tarball-name)
 
-$(tarball-name): $(hone-source) $(pkg-source) snapshot-changelog
+$(tarball-name): $(hone-source) $(pkg-source)
 	tar czf $@ --transform 's@^@hone-$(VERSION)/@' --exclude .svn --exclude '.*.swp' $(hone-source) $(pkg-source)
 
-hone.spec: hone.spec.in $(hone-source)
-	sed -r 's/^(Version: ).*$$/\1$(VERSION)/' $< > $@
+hone.spec: hone.spec.in VERSION
+	@sed -r 's/^(Version: ).*$$/\1$(BASEVER)/' $< > $@
 
-dkms.conf: dkms.conf.in $(hone-source)
-	sed -r 's/^(PACKAGE_VERSION=).*$$/\1"$(VERSION)"/' $< > $@
+dkms.conf: VERSION
+	@echo 'PACKAGE_VERSION="$(BASEVER)"' > $@
+	@echo 'PACKAGE_NAME="hone"' >>  $@
+	@echo 'BUILD_EXCLUSIVE_KERNEL="^2.6.3[0-9]|3.*"' >> $@
+	@i=0; for m in $(HONE_MODULES); do \
+		echo "BUILT_MODULE_NAME[$$i]=\"$$m\"" >> $@; \
+		echo "DEST_MODULE_LOCATION[$$i]=\"/kernel/misc\"" >> $@; \
+		echo "STRIP[$$i]=\"no\"" >> $@; \
+		i=$$((i+1)); \
+	done
 
 ioctl-list.c: honeevent.h
 	@echo '#include <sys/ioctl.h>' > $@
@@ -197,6 +216,6 @@ ioctl-list: ioctl-list.c
 	gcc -o $@ $<
 
 PHONY: all prereq_check help modules modules_install install clean distclean \
-	snapshot-changelog packages deb rpm tarball bump
+	snapshot-changelog packages deb rpm tarball bump-version
 
 endif

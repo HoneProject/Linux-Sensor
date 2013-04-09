@@ -4,19 +4,16 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//')
-
 %:
 	dh $@ --with dkms
 
 override_dh_auto_build:
+	make debian/dkms debian/install debian/changelog
 
 override_dh_auto_install:
-	sed -r 's/__VERSION__/$(pkg-version)/' debian/install.in > debian/install
-	sed -r 's/^(PACKAGE_VERSION=).*$$/\1\"$(pkg-version)"/' dkms.conf.in > debian/dkms
 
 override_dh_install:
-	dh_install --exclude .svn
+	dh_install --exclude .svn --exclude .git
 
 override_dh_auto_clean:
 	rm -f debian/install
