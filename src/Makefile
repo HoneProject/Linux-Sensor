@@ -112,6 +112,9 @@ VER_MICRO := $(word 3,$(VER_SPLIT))
 VER_BUILD := $(word 4,$(VER_SPLIT))
 
 bump-version:
+	$(MAKE) -B VERSION
+
+VERSION:
 	@eval `date '+YEAR=%y MONTH=%m DAY=%d'`; \
 	VERSION="$$YEAR.$$MONTH"; \
 	if [ "$$VERSION" == "$(VER_MAJOR).$(VER_MINOR)" ]; then \
