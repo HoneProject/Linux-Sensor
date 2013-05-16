@@ -119,11 +119,10 @@ struct hone_reader {
 	atomic_t flags;
 	struct sock *filter_sk;
 	struct hone_event *event;
+	wait_queue_head_t event_wait_queue;
 	unsigned int buflen;
 	char *buf;
 };
-
-static DECLARE_WAIT_QUEUE_HEAD(event_wait_queue);
 
 static struct hone_event head_event = {HONE_USER_HEAD, {ATOMIC_INIT(1)}};
 static struct hone_event tail_event = {HONE_USER_TAIL, {ATOMIC_INIT(1)}};
@@ -279,23 +278,25 @@ static void inc_stats_counter(struct statistics *stats, int type)
 	atomic64_inc(counter);
 }
 
-static void inline enqueue_event(struct hone_reader *reader,
+static int inline enqueue_event(struct hone_reader *reader,
 		struct hone_event *event)
 {
 	// Ignore threads for now
 	if (event->type == HONE_PROCESS && event->process.pid != event->process.tgid)
-		return;
+		return 0;
 	// Filter out packets for local socket, if set
 	if (event->type == HONE_PACKET && reader->filter_sk &&
 			event->packet.sock == (unsigned long) reader->filter_sk) {
 		atomic64_inc(&reader->info.filtered);
-		return;
+		return 0;
 	}
 	get_hone_event(event);
 	if (ring_append(&reader->ringbuf, event)) {
 		inc_stats_counter(&reader->info.dropped, event->type);
 		put_hone_event(event);
+		return 0;
 	}
+	return 1;
 }
 
 static int hone_event_handler(struct notifier_block *nb, unsigned long val, void *v)
@@ -303,9 +304,8 @@ static int hone_event_handler(struct notifier_block *nb, unsigned long val, void
 	struct hone_reader *reader =
 			container_of(nb, struct hone_reader, nb);
 
-	enqueue_event(reader, v);
-	if (waitqueue_active(&event_wait_queue))
-		wake_up_interruptible_all(&event_wait_queue);
+	if (enqueue_event(reader, v))
+		wake_up_interruptible_all(&reader->event_wait_queue);
 
 	return 0;
 }
@@ -345,6 +345,7 @@ static struct hone_reader *alloc_hone_reader(void)
 	reader->format = format_as_pcapng;
 	atomic_set(&reader->flags, READER_HEAD | READER_INIT);
 	sema_init(&reader->sem, 1);
+	init_waitqueue_head(&reader->event_wait_queue);
 	return reader;
 
 alloc_failed:
@@ -518,7 +519,7 @@ try_sleep:
 	while (!*offset && reader_will_block(reader)) {
 		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
-		if (wait_event_interruptible(event_wait_queue,
+		if (wait_event_interruptible(reader->event_wait_queue,
 					!reader_will_block(reader)))
 			return -EINTR;
 	}
@@ -610,8 +611,7 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 	switch (num) {
 	case HEIO_RESTART:
 		atomic_set_mask(READER_RESTART, &reader->flags);
-		if (waitqueue_active(&event_wait_queue))
-			wake_up_interruptible_all(&event_wait_queue);
+		wake_up_interruptible_all(&reader->event_wait_queue);
 		return 0;
 	case HEIO_GET_AT_HEAD:
 		return atomic_read(&reader->flags) & READER_HEAD ? 1 : 0;
@@ -655,17 +655,9 @@ static unsigned int hone_poll(struct file *file,
 {
 	struct hone_reader *reader = file->private_data;
 
-	if (!reader)
-		return -EFAULT;
-
+	poll_wait(file, &reader->event_wait_queue, wait);
 	if (!reader_will_block(reader))
-		return POLLIN;
-
-	poll_wait(file, &event_wait_queue, wait);
-
-	if (!reader_will_block(reader))
-		return POLLIN;
-
+		return POLLIN | POLLRDNORM;
 	return 0;
 }
 
