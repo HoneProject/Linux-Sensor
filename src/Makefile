@@ -17,7 +17,7 @@
 # Each of the *_NOTIFY variables below can take one of three values:
 #   c - Combine the module with the dependent rather than build separate
 #   m - Build as a separate module
-#   n - Do not build the module at all
+#   n - Do not build the module at all (will likely break things)
 #
 # Dependencies:
 #   honeevent
@@ -37,7 +37,7 @@ HONE_MODULES ?= $(foreach m,socket_notify packet_notify process_notify hone_noti
 ifneq ($(KERNELRELEASE),)
 # This is the kernel build (Kbuild) section.
 
-# Since hone is being built out of tree, the CONFIG_* variables are not set.
+# Because hone is being built out of tree, the CONFIG_* variables are not set.
 # The following lines set the variables via the compiler command-line.
 CONFIG = $(if $(filter-out n,$(CONFIG_$(1))),-DCONFIG_$(1)$(or \
 	$(if $(filter m,$(CONFIG_$(1))),_MODULE), \

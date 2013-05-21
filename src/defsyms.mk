@@ -33,7 +33,7 @@ SP :=
 SP +=
 
 quiet_cmd_defsyms = DEFSYMS $@
-cmd_defsyms = awk '$$3 ~ /^($(subst $(SP),|,$(strip $($*-defsyms) $(foreach N,$(patsubst %.o,%-defsyms,$($*-y)),$(value $N)))))(.[a-z]+.[0-9]+)?$$/ {gsub(".[a-z]+.[0-9]+$$", "", $$3); print $$3 " = 0x" $$1 ";"}' $(SYSMAP) > $@
+cmd_defsyms = SYMBOLS="$(subst $(SP),|,$(strip $($*-defsyms) $(foreach N,$(patsubst %.o,%-defsyms,$($*-y)),$(value $N))))" && [ -n "$$SYMBOLS" ] && awk '$$3 ~ /^('"$$SYMBOLS"')(.[a-z]+.[0-9]+)?$$/ {gsub(".[a-z]+.[0-9]+$$", "", $$3); print $$3 " = 0x" $$1 ";"}' $(SYSMAP) > $@ || echo "$$SYMBOLS" > $@
 quiet_cmd_md5 = MD5SUM  $3
 cmd_md5 = md5sum $2 > $3
 quiet_cmd_symvers = SYMVERS $@
