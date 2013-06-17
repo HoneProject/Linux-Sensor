@@ -218,7 +218,15 @@ ioctl-list.c: honeevent.h
 ioctl-list: ioctl-list.c
 	gcc -o $@ $<
 
+load:
+	@(( $$UID )) && SU=sudo || unset SU; \
+		for mod in $(HONE_MODULES); do $$SU insmod $$mod.ko; done
+
+unload:
+	@(( $$UID )) && SU=sudo || unset SU; \
+		for mod in $(HONE_MODULES); do echo $$mod; done | tac | xargs $$SU rmmod
+
 PHONY: all prereq_check help modules modules_install install clean distclean \
-	snapshot-changelog packages deb rpm tarball bump-version
+	snapshot-changelog packages deb rpm tarball bump-version load unload
 
 endif
