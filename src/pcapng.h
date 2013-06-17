@@ -18,7 +18,7 @@
 #ifndef _PCAPNG_H
 #define _PCAPNG_H
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <linux/time.h>
 
 #define HONE_USER_HEAD (HONE_USER | 1)

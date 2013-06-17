@@ -18,7 +18,7 @@
  * Implementation of lock-free ring buffer.
  */
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "ringbuf.h"
 

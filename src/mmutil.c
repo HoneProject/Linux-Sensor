@@ -53,8 +53,8 @@ static char *__exe_path(struct mm_struct *mm, char *buf, int buflen)
 		struct vfsmount *mnt;
 		struct dentry *dentry;
 
-		mnt = mntget(exe_file->f_vfsmnt);
-		dentry = dget(exe_file->f_dentry);
+		mnt = mntget(exe_file->f_path.mnt);
+		dentry = dget(exe_file->f_path.dentry);
 
 		if (mnt && dentry) {
 			path = D_PATH(mnt, dentry, buf, buflen);
