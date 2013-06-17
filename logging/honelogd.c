@@ -1,19 +1,13 @@
 /*
  * honelogd - Log daemon for hone character device
  *
- * Copyright (C) 2011 Battelle Memorial Institute <http://www.battelle.org>
+ * Copyright (C) 2011 Battelle Memorial Institute
  *
- * Author: Brandon Carpenter
- *
- * This package is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Licensed under a modified 3-clause BSD license.
+ * See LICENSE for the full text of the license.
+ * See DISCLAIMER for additional disclaimers.
  * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Author: Brandon Carpenter
  */
 
 #define _FILE_OFFSET_BITS 64
