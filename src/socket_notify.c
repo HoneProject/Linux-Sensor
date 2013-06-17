@@ -236,10 +236,10 @@ module_exit(socket_notify_module_exit);
 
 MODULE_DESCRIPTION("Socket event notification module.");
 MODULE_AUTHOR("Brandon Carpenter");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION(HONE_VERSION);
 
-EXPORT_SYMBOL_GPL(sock_notifier_register);
-EXPORT_SYMBOL_GPL(sock_notifier_unregister);
+EXPORT_SYMBOL(sock_notifier_register);
+EXPORT_SYMBOL(sock_notifier_unregister);
 
 #endif // CONFIG_SOCKET_NOTIFY_COMBINED

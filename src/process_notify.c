@@ -205,11 +205,11 @@ module_exit(process_notify_module_exit);
 
 MODULE_DESCRIPTION("Process event notification module.");
 MODULE_AUTHOR("Brandon Carpenter");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION(HONE_VERSION);
 
-EXPORT_SYMBOL_GPL(process_notifier_register);
-EXPORT_SYMBOL_GPL(process_notifier_unregister);
+EXPORT_SYMBOL(process_notifier_register);
+EXPORT_SYMBOL(process_notifier_unregister);
 
 #endif // CONFIG_PROCESS_NOTIFY_COMBINED
 

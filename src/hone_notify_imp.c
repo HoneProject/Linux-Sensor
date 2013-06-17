@@ -401,16 +401,16 @@ module_exit(hone_notify_module_exit);
 
 MODULE_DESCRIPTION("Hone event notifier module.");
 MODULE_AUTHOR("Brandon Carpenter");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION(HONE_VERSION);
 
-EXPORT_SYMBOL_GPL(get_hone_statistics);
-EXPORT_SYMBOL_GPL(hone_notifier_register);
-EXPORT_SYMBOL_GPL(hone_notifier_unregister);
-EXPORT_SYMBOL_GPL(alloc_hone_event);
-EXPORT_SYMBOL_GPL(__alloc_process_event);
-EXPORT_SYMBOL_GPL(__alloc_socket_event);
-EXPORT_SYMBOL_GPL(free_hone_event);
+EXPORT_SYMBOL(get_hone_statistics);
+EXPORT_SYMBOL(hone_notifier_register);
+EXPORT_SYMBOL(hone_notifier_unregister);
+EXPORT_SYMBOL(alloc_hone_event);
+EXPORT_SYMBOL(__alloc_process_event);
+EXPORT_SYMBOL(__alloc_socket_event);
+EXPORT_SYMBOL(free_hone_event);
 
 #endif // CONFIG_HONE_NOTIFY_COMBINED
 

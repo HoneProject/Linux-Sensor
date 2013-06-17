@@ -233,11 +233,11 @@ module_exit(packet_notify_module_exit);
 
 MODULE_DESCRIPTION("Internet protocol packet event notification module.");
 MODULE_AUTHOR("Brandon Carpenter");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION(HONE_VERSION);
 
-EXPORT_SYMBOL_GPL(packet_notifier_register);
-EXPORT_SYMBOL_GPL(packet_notifier_unregister);
+EXPORT_SYMBOL(packet_notifier_register);
+EXPORT_SYMBOL(packet_notifier_unregister);
 
 #endif // CONFIG_PACKET_NOTIFY_COMBINED
 

@@ -40,7 +40,7 @@
 
 MODULE_DESCRIPTION("Hone event character device.");
 MODULE_AUTHOR("Brandon Carpenter");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_VERSION(HONE_VERSION);
 MODULE_ALIAS("hone");
 
