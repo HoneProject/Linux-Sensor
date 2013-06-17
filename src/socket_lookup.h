@@ -1,4 +1,14 @@
 /*
+ * Modifications copyright (C) 2011 Battelle Memorial Institute
+ *
+ * Licensed under the GNU General Public License Version 2.
+ * See LICENSE for the full text of the license.
+ * See DISCLAIMER for additional disclaimers.
+ * 
+ * Author: Brandon Carpenter
+ */
+
+/*
  * The following code was conveniently borrowed form the xt_socket
  * iptables module and used with minor modifications.  Thanks guys!
  *
@@ -6,23 +16,6 @@
  *
  * Copyright (C) 2007-2008 BalaBit IT Ltd.
  * Author: Krisztian Kovacs
- *
- *
- * Modifications Copyright (C) 2011 Battelle Memorial Institute
- *   <http://www.battelle.org>
- *
- * Author: Brandon Carpenter
- *
- * This package is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- * 
- * This package is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #include <linux/version.h>

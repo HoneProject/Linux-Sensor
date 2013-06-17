@@ -4,14 +4,14 @@ Author: Brandon Carpenter
 Maintainer: Brandon Carpenter
 Source: http://github.com/HoneProject
 
-Copyright: 2011, Battelle Memorial Institute <http://www.battelle.org>
-License: GPL-2.0+
-
-License: GPL-2.0+
+Copyright: 2011, Battelle Memorial Institute
+License: GPL-2
+ This package has additional disclaimers found in
+ /usr/share/doc/hone/DISCLAIMER.
+ .
  This package is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
- (at your option) any later version.
+ it under the terms of the GNU General Public License version 2 as
+ published by the Free Software Foundation.
  .
  This package is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
