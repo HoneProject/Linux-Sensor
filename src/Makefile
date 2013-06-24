@@ -85,7 +85,7 @@ KVER ?= $(shell uname -r)
 KSRC ?= /lib/modules/$(KVER)/build
 
 hone-source = Makefile defsyms.mk $(filter-out %.mod.c,$(wildcard *.[ch]))
-pkg-source = dkms.conf LICENSE README VERSION debian/* hone.spec.in hone.spec version.h
+pkg-source = dkms.conf DISCLAIMER LICENSE README VERSION debian/* hone.spec.in hone.spec version.h
 clean-files = dkms.conf hone.spec ioctl-list.c version.h
 pkg-version = $(shell dpkg-parsechangelog | sed -r '/^Version:/!d;s/^[^:]+:\s+//' || sed -r '2,$d;s/^.*\((.*)\).*$/\1/' debian/changelog)
 
