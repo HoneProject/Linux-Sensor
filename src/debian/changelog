@@ -2,23 +2,29 @@ hone (13.06.24) unstable; urgency=low
 
   * New snapshot release.
 
- -- Brandon Carpenter <hashstat@pnnl.gov>  Mon, 24 Jun 2013 12:16:04 -0700
+ -- Brandon Carpenter <brandon.carpenter@pnnl.gov>  Mon, 24 Jun 2013 12:16:04 -0700
 
 hone (13.06) unstable; urgency=low
 
   * New snapshot release.
 
- -- Brandon Carpenter <hashstat@pnnl.gov>  Mon, 17 Jun 2013 10:54:15 -0700
+ -- Brandon Carpenter <brandon.carpenter@pnnl.gov>  Mon, 17 Jun 2013 10:54:15 -0700
 
 hone (13.04) unstable; urgency=low
 
   * New snapshot release.
 
- -- Brandon Carpenter <hashstat@pnnl.gov>  Mon, 17 Jun 2013 10:53:38 -0700
+ -- Brandon Carpenter <brandon.carpenter@pnnl.gov>  Tue, 16 Apr 2013 09:24:34 -0700
+
+hone (13.02) unstable; urgency=low
+
+  * New snapshot release.
+
+ -- Brandon Carpenter <brandon.carpenter@pnnl.gov>  Fri, 15 Feb 2013 10:44:18 -0800
 
 hone (0.3) unstable; urgency=low
 
   * Initial release.
 
- -- Brandon Carpenter <hashstat@pnnl.gov>  Thu, 29 Dec 2011 13:23:07 -0800
+ -- Brandon Carpenter <brandon.carpenter@pnnl.gov>  Thu, 29 Dec 2011 13:23:07 -0800
 
