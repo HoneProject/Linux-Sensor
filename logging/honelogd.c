@@ -3,9 +3,9 @@
  *
  * Copyright (C) 2011 Battelle Memorial Institute
  *
- * Licensed under a modified 3-clause BSD license.
- * See LICENSE for the full text of the license.
- * See DISCLAIMER for additional disclaimers.
+ * Licensed under the GNU General Public License Version 2.
+ * See ../src/LICENSE for the full text of the license.
+ * See ../src/DISCLAIMER for additional disclaimers.
  * 
  * Author: Brandon Carpenter
  */
