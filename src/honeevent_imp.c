@@ -481,9 +481,6 @@ static int hone_release(struct inode *inode, struct file *file)
 	struct hone_reader *reader = file->private_data;
 	struct hone_event *event;
 
-	if (!reader)
-		return -EFAULT;
-
 	hone_notifier_unregister(&reader->nb);
 	file->private_data = NULL;
 	while ((event = ring_pop(&reader->ringbuf)))
@@ -504,9 +501,6 @@ static ssize_t hone_read(struct file *file, char __user *buffer,
 {
 	struct hone_reader *reader = file->private_data;
 	size_t n, copied = 0;
-
-	if (!reader)
-		return -EFAULT;
 
 try_sleep:
 	while (!*offset && reader_will_block(reader)) {
@@ -594,9 +588,6 @@ static int hone_ioctl(struct inode *inode, struct file *file,
 {
 	struct hone_reader *reader = file->private_data;
 	int err;
-
-	if (!reader)
-		return -EFAULT;
 
 	if (_IOC_TYPE(num) != 0xE0)
 		return -EINVAL;
