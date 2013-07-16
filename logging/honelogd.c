@@ -6,11 +6,12 @@
  * Licensed under the GNU General Public License Version 2.
  * See ../src/LICENSE for the full text of the license.
  * See ../src/DISCLAIMER for additional disclaimers.
- * 
+ *
  * Author: Brandon Carpenter
  */
 
 #define _FILE_OFFSET_BITS 64
+#define _GNU_SOURCE
 
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -19,32 +20,33 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <err.h>
+#include <sysexits.h>
 
+#include <argp.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <syslog.h>
-#include <getopt.h>
 #include <signal.h>
 
-#include <arpa/inet.h>
-
 #include "honeevent.h"
+
 
 #define DAEMON_NAME "honelogd"
 #define PID_PATH "/var/run/" DAEMON_NAME ".pid"
 #define DEV_PATH "/dev/hone"
 #define LOG_PATH "/var/log/hone/hone"
 
+
 static void stdlog(int priority, const char *format, ...);
 
-static const char *daemon_name = DAEMON_NAME;
-static const char *exe_name = DAEMON_NAME;
 static char *log_path = LOG_PATH;
 static void (*log_msg)(int priority, const char *format, ...) = stdlog;
 
 static sig_atomic_t done = 0;
 static sig_atomic_t restart = 0;
+
 
 static void sighandler(int signum)
 {
@@ -56,12 +58,13 @@ static void sighandler(int signum)
 		case SIGINT: case SIGTERM:
 			done++;
 			if (done > 3)
-				exit(EXIT_SUCCESS);
+				exit(EX_OK);
 			break;
 		default:
 			break;
 	}
 }
+
 
 static void stdlog(int priority, const char *format, ...)
 {
@@ -73,13 +76,14 @@ static void stdlog(int priority, const char *format, ...)
 		vprintf(format, args);
 		fflush(stdout);
 	} else {
-		fprintf(stderr, "%s: error: ", exe_name);
+		fprintf(stderr, "%s: error: ", program_invocation_name);
 		vfprintf(stderr, format, args);
 		fflush(stderr);
 	}
 
 	va_end(args);
 }
+
 
 static void daemon_exit(void)
 {
@@ -90,6 +94,7 @@ static void daemon_exit(void)
 	}
 }
 
+
 static void daemonize(const char *pid_path)
 {
 	pid_t pid, sid;
@@ -98,9 +103,9 @@ static void daemonize(const char *pid_path)
 	pid = fork();
 	if (pid < 0) {
 		log_msg(LOG_ERR, "fork() failed: %m\n");
-		exit(EXIT_FAILURE);
+		exit(EX_OSERR);
 	} else if (pid > 0) {
-		exit(EXIT_SUCCESS);
+		exit(EX_OK);
 	}
 
 	/* Get pid of child (current) process */
@@ -109,20 +114,20 @@ static void daemonize(const char *pid_path)
 	/* Change the file mode mask */
 	umask(0022);
 
-	openlog(daemon_name, 0, LOG_DAEMON);
+	openlog(DAEMON_NAME, 0, LOG_DAEMON);
 	log_msg = syslog;
 
 	/* Create a new session ID for the daemon process */
 	sid = setsid();
 	if (sid < 0) {
 		log_msg(LOG_ERR, "setsid() failed: %m\n");
-		exit(EXIT_FAILURE);
+		exit(EX_OSERR);
 	}
 
 	/* Change the current working directory */
 	if (chdir("/") < 0) {
 		log_msg(LOG_ERR, "chdir() failed: %m: /\n");
-		exit(EXIT_FAILURE);
+		exit(EX_OSERR);
 	}
 
 	/* Close standard file descriptors */
@@ -146,26 +151,11 @@ static void daemonize(const char *pid_path)
 	atexit(daemon_exit);
 }
 
-static void print_tip(void)
-{
-	printf("Try `%s --help' for more information.\n", exe_name);
-}
 
-static void print_help(void)
-{
-	printf(
-"Usage: %s [OPTION]...\n"
-"Log Hone packet/process data to a file.\n\n"
-"Mandatory arguments to long options are mandatory for short options too.\n"
-"  -a, --append           append new records to log file instead of overwriting\n"
-"  -b, --background       background (daemonize) process after starting\n"
-"  -e, --event-file=FILE  read events from FILE [%s]\n"
-"  -f, --log-file=FILE    write events to FILE [%s]\n"
-"  -p, --pid-file=FILE    write the process ID to FILE [%s]\n"
-"  -s, --snaplen=LENGTH   set the maximum packet capture size to LENGTH\n"
-"  -h, --help             display this help and exit\n"
-	, exe_name, DEV_PATH, LOG_PATH, PID_PATH);
-}
+const char *argp_program_version = "honelogd 0.2";
+const char *argp_program_bug_address =
+		"Brandon Carpenter <brandon.carpenter@pnnl.gov>";
+
 
 int main(int argc, char *argv[])
 {
@@ -175,81 +165,64 @@ int main(int argc, char *argv[])
 	FILE *log_file = NULL;
 	char *mode = "w";
 	char buf[8192];
- 
-	/* Get the base name of the executable */
-	exe_name = argv[0];
-	daemon_name = exe_name + strlen(exe_name);
-	while (daemon_name > argv[0] && *(daemon_name - 1) != '/')
-		daemon_name--;
 
-	/* Parse command-line options */
-	while (1) {
-		static struct option long_options[] = {
-			{"append", no_argument, 0, 'a'},
-			{"background", no_argument, 0, 'b'},
-			{"event-file", required_argument, 0, 'e'},
-			{"help", no_argument, 0, 'h'},
-			{"log-file", required_argument, 0, 'f'},
-			{"pid-file", required_argument, 0, 'p'},
-			{"snaplen", required_argument, 0, 's'},
-		};
-		int c, option_index;
+	struct argp_option options[] = {
+		{"append", 'a', 0, 0, "open output in append mode"},
+		{"background", 'b', 0, 0, "background (daemonize) process after starting"},
+		{"device", 'd', "DEVICE", 0, "read events from DEVICE (default: " DEV_PATH ")"},
+		{"output", 'o', "FILE", 0, "write events to FILE (default: " LOG_PATH ")"},
+		{"pid-file", 'p', "FILE", 0, "write process ID to FILE (default: " PID_PATH ")"},
+		{"snaplen", 's', "BYTES", 0, "set maximum packet capture size to BYTES bytes"},
+		{0},
+	};
 
-		c = getopt_long(argc, argv, "abe:f:hp:s:", long_options, &option_index);
-		if (c == -1)
+	error_t parse_opt(int key, char *arg, struct argp_state *state)
+	{
+		switch (key) {
+		case 'a':
+			mode = "a";
 			break;
-
-		switch (c) {
-			case 'a':
-				mode = "a";
-				break;
-			case 'b':
-				background = 1;
-				break;
-			case 'e':
-				dev_path = optarg;
-				break;
-			case 'f':
-				log_path = optarg;
-				break;
-			case 'h':
-				print_help();
-				exit(EXIT_FAILURE);
-			case '?':
-				print_tip();
-				exit(EXIT_FAILURE);
-			case 'p':
-				pid_path = optarg;
-				break;
-			case 's':
-			{
-				unsigned long tmp;
-				char *end;
-				tmp = strtoul(optarg, &end, 10);
-				if (!*optarg || *end || (tmp > UINT32_MAX && tmp != -1)) {
-					fprintf(stderr, "%s: invalid snaplen: %s\n", exe_name, optarg);
-					exit(EXIT_FAILURE);
-				}
-				snaplen = tmp == -1 ? UINT32_MAX : (unsigned int) tmp;
-				break;
-			}
-			default:
-				fprintf(stderr, "invalid option -- %c\n", c);
-				print_tip();
-				exit(EXIT_FAILURE);
+		case 'b':
+			background = 1;
+			break;
+		case 'd':
+			dev_path = arg;
+			break;
+		case 'o':
+			log_path = arg;
+			break;
+		case 'p':
+			pid_path = arg;
+			break;
+		case 's':
+		{
+			unsigned long tmp;
+			char *end;
+			tmp = strtoul(arg, &end, 10);
+			if (!*arg || *end || (tmp > UINT32_MAX && tmp != -1))
+				argp_error(state, "invalid snaplen: %s\n", arg);
+			snaplen = tmp == -1 ? UINT32_MAX : (unsigned int) tmp;
+			break;
 		}
+		case ARGP_KEY_ARG:
+			argp_error(state, "too many arguments");
+		default:
+			return ARGP_ERR_UNKNOWN;
+		}
+		return 0;
 	}
 
-	if (argc - optind > 0) {
-		fprintf(stderr, "%s: too many arguments\n", exe_name);
-		print_tip();
-		exit(EXIT_FAILURE);
-	}
+	struct argp argp = {options, parse_opt, NULL,
+			"Log Hone events to a file.", NULL, NULL, NULL};
+
+	if ((rc = argp_parse(&argp, argc, argv, 0, NULL, NULL)))
+		err(EX_OSERR, NULL);
 
 	/*
-	printf("OPTIONS: background %d event-file %s log-file %s pid-file %s\n",
-			background, dev_path, log_path, pid_path);
-	exit(EXIT_SUCCESS);
+	printf("OPTIONS: background=%d, device=\"%s\", mode=\"%s\", "
+			"output=\"%s\", pid-file=\"%s\", snaplen=%u\n",
+			background, dev_path, mode, log_path, pid_path, snaplen);
+	exit(EX_OK);
 	*/
 
 	if (background)
@@ -269,11 +242,11 @@ int main(int argc, char *argv[])
 	fd = open(dev_path, O_RDONLY, 0);
 	if (fd == -1) {
 		log_msg(LOG_ERR, "%s: open() failed: %m:\n", dev_path);
-		exit(EXIT_FAILURE);
+		exit(EX_NOINPUT);
 	}
 	if (snaplen && ioctl(fd, HEIO_SET_SNAPLEN, snaplen) == -1) {
 		log_msg(LOG_ERR, "ioctl() failed: %m\n");
-		exit(EXIT_FAILURE);
+		exit(EX_IOERR);
 	}
 
 restart:
@@ -284,10 +257,10 @@ restart:
 		close_log();
 	if (!strcmp(log_path, "-") && !(log_file = fdopen(STDOUT_FILENO, "w"))) {
 		log_msg(LOG_ERR, "stdout: fdopen() failed: %m\n");
-		exit(EXIT_FAILURE);
+		exit(EX_CANTCREAT);
 	} else if (!(log_file = fopen(log_path, mode))) {
 		log_msg(LOG_ERR, "%s: fopen() failed: %m\n", log_path);
-		exit(EXIT_FAILURE);
+		exit(EX_CANTCREAT);
 	}
 	mode = "a";
 
@@ -295,7 +268,7 @@ restart:
 		if ((restart || done) && !restart_requested) {
 			if (ioctl(fd, HEIO_RESTART) == -1) {
 				log_msg(LOG_ERR, "ioctl() failed: %m\n");
-				exit(EXIT_FAILURE);
+				exit(EX_IOERR);
 			}
 			log_msg(LOG_DEBUG, "Requesting device restart.\n");
 			restart_requested = 1;
@@ -303,7 +276,7 @@ restart:
 
 		if ((n = read(fd, buf, sizeof(buf))) == -1) {
 			if (errno != EINTR && errno != EAGAIN) {
-				log_msg(LOG_ERR, "%s: read failure: %m\n", dev_path); 
+				log_msg(LOG_ERR, "%s: read failure: %m\n", dev_path);
 				goto out;
 			}
 			continue;
@@ -320,7 +293,7 @@ restart:
 		while ((n -= fwrite(buf, 1, n, log_file))) {
 			if (ferror(log_file) && (errno == EINTR || errno == EAGAIN))
 				continue;
-			log_msg(LOG_ERR, "%s: write failure: %m\n", log_path); 
+			log_msg(LOG_ERR, "%s: write failure: %m\n", log_path);
 			goto out;
 		}
 	}
@@ -330,6 +303,6 @@ out:
 	if (fd != -1)
 		close(fd);
 
-	exit(done ? EXIT_SUCCESS : EXIT_FAILURE);
+	exit(done ? EX_OK : EX_SOFTWARE);
 }
 
