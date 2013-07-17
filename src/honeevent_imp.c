@@ -113,7 +113,7 @@ struct hone_reader {
 	struct sock *filter_sk;
 	struct hone_event *event;
 	wait_queue_head_t event_wait_queue;
-	unsigned int buflen;
+	size_t length, offset;
 	char *buf;
 };
 
@@ -236,6 +236,10 @@ static unsigned int format_as_text(
 			printbuf("%lu.%09lu HEAD %lu.%09lu\n",
 					info->start_time.tv_sec, info->start_time.tv_nsec,
 					info->boot_time.tv_sec, info->boot_time.tv_nsec);
+		break;
+	case HONE_USER_TAIL:
+		printbuf("%lu.%09lu TAIL\n",
+				info->start_time.tv_sec, info->start_time.tv_nsec);
 		break;
 	default:
 		printbuf("%lu.%09lu ???? %d\n",
@@ -506,7 +510,7 @@ static ssize_t hone_read(struct file *file, char __user *buffer,
 		return 0;
 
 	do {
-		while (!*offset && reader_will_block(reader)) {
+		while (!reader->offset && reader_will_block(reader)) {
 			if (file->f_flags & O_NONBLOCK)
 				return -EAGAIN;
 			if (wait_event_interruptible(reader->event_wait_queue,
@@ -522,7 +526,7 @@ static ssize_t hone_read(struct file *file, char __user *buffer,
 		}
 
 		while (copied < length) {
-			if (!*offset) {
+			if (!reader->offset) {
 				int flags;
 				struct hone_event *event;
 				void (*free_event)(struct hone_event *);
@@ -556,21 +560,21 @@ static ssize_t hone_read(struct file *file, char __user *buffer,
 
 				if (!event)
 					break;
-				reader->buflen = reader->format(&devinfo, &reader->info,
+				reader->length = reader->format(&devinfo, &reader->info,
 						event, reader->buf, READ_BUFFER_SIZE);
 				inc_stats_counter(&reader->info.delivered, event->type);
 				if (free_event)
 					free_event(event);
 			}
-			n = min(reader->buflen - (size_t) *offset, length - copied);
-			if (copy_to_user(buffer + copied, reader->buf + *offset, n)) {
+			n = min(reader->length - reader->offset, length - copied);
+			if (copy_to_user(buffer + copied, reader->buf + reader->offset, n)) {
 				up(&reader->sem);
 				return -EFAULT;
 			}
 			copied += n;
-			*offset += n;
-			if (*offset >= reader->buflen)
-				*offset = 0;
+			reader->offset += n;
+			if (reader->offset >= reader->length)
+				reader->offset = 0;
 		}
 		up(&reader->sem);
 	} while (!copied);
