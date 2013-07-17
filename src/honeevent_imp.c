@@ -502,77 +502,78 @@ static ssize_t hone_read(struct file *file, char __user *buffer,
 	struct hone_reader *reader = file->private_data;
 	size_t n, copied = 0;
 
-try_sleep:
-	while (!*offset && reader_will_block(reader)) {
-		if (file->f_flags & O_NONBLOCK)
-			return -EAGAIN;
-		if (wait_event_interruptible(reader->event_wait_queue,
-					!reader_will_block(reader)))
+	if (!length)
+		return 0;
+
+	do {
+		while (!*offset && reader_will_block(reader)) {
+			if (file->f_flags & O_NONBLOCK)
+				return -EAGAIN;
+			if (wait_event_interruptible(reader->event_wait_queue,
+						!reader_will_block(reader)))
+				return -EINTR;
+		}
+
+		if (file->f_flags & O_NONBLOCK) {
+			if (down_trylock(&reader->sem))
+				return -EAGAIN;
+		} else if (down_interruptible(&reader->sem)) {
 			return -EINTR;
-	}
+		}
 
-	if (file->f_flags & O_NONBLOCK) {
-		if (down_trylock(&reader->sem))
-			return -EAGAIN;
-	} else if (down_interruptible(&reader->sem)) {
-		return -EINTR;
-	}
+		while (copied < length) {
+			if (!*offset) {
+				int flags;
+				struct hone_event *event;
+				void (*free_event)(struct hone_event *);
 
-	while (copied < length) {
-		if (!*offset) {
-			int flags;
-			struct hone_event *event;
-			void (*free_event)(struct hone_event *);
+				flags = atomic_read(&reader->flags);
+				if (flags & READER_TAIL) {
+					atomic_clear_mask(READER_TAIL, &reader->flags);
+					event = &tail_event;
+					free_event = NULL;
+				} else if (flags & READER_FINISH) {
+					if (!copied)
+						atomic_clear_mask(READER_FINISH, &reader->flags);
+					up(&reader->sem);
+					return copied;
+				} else if (flags & READER_HEAD) {
+					atomic_clear_mask(READER_HEAD, &reader->flags);
+					event = &head_event;
+					free_event = NULL;
+				} else if (flags & READER_INIT) {
+					atomic_clear_mask(READER_INIT, &reader->flags);
+					add_initial_events(reader);
+					continue;
+				} else if (reader->event) {
+					if ((event = reader->event))
+						reader->event = event->next;
+					free_event = free_hone_event;
+				} else {
+					event = ring_pop(&reader->ringbuf);
+					free_event = put_hone_event;
+				}
 
-			flags = atomic_read(&reader->flags);
-			if (flags & READER_TAIL) {
-				atomic_clear_mask(READER_TAIL, &reader->flags);
-				event = &tail_event;
-				free_event = NULL;
-			} else if (flags & READER_FINISH) {
-				if (copied)
+				if (!event)
 					break;
-				atomic_clear_mask(READER_FINISH, &reader->flags);
-				up(&reader->sem);
-				return 0;
-			} else if (flags & READER_HEAD) {
-				atomic_clear_mask(READER_HEAD, &reader->flags);
-				event = &head_event;
-				free_event = NULL;
-			} else if (flags & READER_INIT) {
-				atomic_clear_mask(READER_INIT, &reader->flags);
-				add_initial_events(reader);
-				continue;
-			} else if (reader->event) {
-				if ((event = reader->event))
-					reader->event = event->next;
-				free_event = free_hone_event;
-			} else {
-				event = ring_pop(&reader->ringbuf);
-				free_event = put_hone_event;
+				reader->buflen = reader->format(&devinfo, &reader->info,
+						event, reader->buf, READ_BUFFER_SIZE);
+				inc_stats_counter(&reader->info.delivered, event->type);
+				if (free_event)
+					free_event(event);
 			}
-
-			if (!event)
-				break;
-			reader->buflen = reader->format(&devinfo, &reader->info,
-					event, reader->buf, READ_BUFFER_SIZE);
-			inc_stats_counter(&reader->info.delivered, event->type);
-			if (free_event)
-				free_event(event);
+			n = min(reader->buflen - (size_t) *offset, length - copied);
+			if (copy_to_user(buffer + copied, reader->buf + *offset, n)) {
+				up(&reader->sem);
+				return -EFAULT;
+			}
+			copied += n;
+			*offset += n;
+			if (*offset >= reader->buflen)
+				*offset = 0;
 		}
-		n = min(reader->buflen - (size_t) *offset, length - copied);
-		if (copy_to_user(buffer + copied, reader->buf + *offset, n)) {
-			up(&reader->sem);
-			return -EFAULT;
-		}
-		copied += n;
-		*offset += n;
-		if (*offset >= reader->buflen)
-			*offset = 0;
-	}
-	up(&reader->sem);
-	if (!copied)
-		goto try_sleep;
+		up(&reader->sem);
+	} while (!copied);
 	return copied;
 }
 
