@@ -33,15 +33,10 @@
 #include "honeevent.h"
 
 
-#define DAEMON_NAME "honelogd"
-#define PID_PATH "/var/run/" DAEMON_NAME ".pid"
 #define DEV_PATH "/dev/hone"
-#define LOG_PATH "/var/log/hone/hone"
 
 
 static void stdlog(int priority, const char *format, ...);
-
-static char *log_path = LOG_PATH;
 static void (*log_msg)(int priority, const char *format, ...) = stdlog;
 
 static sig_atomic_t done = 0;
@@ -66,6 +61,28 @@ static void sighandler(int signum)
 }
 
 
+static int log_stderr(const char *format, ...)
+{
+	int result;
+	va_list args;
+
+	va_start(args, format);
+	result = vdprintf(STDERR_FILENO, format, args);
+	va_end(args);
+	return result;
+}
+
+
+static int nolog(const char *format, ...)
+{
+	return 0;
+}
+
+static int (*verbose1)(const char *format, ...) = nolog;
+static int (*verbose2)(const char *format, ...) = nolog;
+static int (*verbose3)(const char *format, ...) = nolog;
+
+
 static void stdlog(int priority, const char *format, ...)
 {
 	va_list args;
@@ -82,16 +99,6 @@ static void stdlog(int priority, const char *format, ...)
 	}
 
 	va_end(args);
-}
-
-
-static void daemon_exit(void)
-{
-	log_msg(LOG_INFO, "daemon proccess with pid %d stopped\n", getpid());
-	if (!access(PID_PATH, F_OK)) {
-		if (unlink(PID_PATH))
-			log_msg(LOG_ERR, "error removing pid file: %m: %s\n", PID_PATH);
-	}
 }
 
 
@@ -114,7 +121,7 @@ static void daemonize(const char *pid_path)
 	/* Change the file mode mask */
 	umask(0022);
 
-	openlog(DAEMON_NAME, 0, LOG_DAEMON);
+	openlog(program_invocation_short_name, 0, LOG_DAEMON);
 	log_msg = syslog;
 
 	/* Create a new session ID for the daemon process */
@@ -136,8 +143,17 @@ static void daemonize(const char *pid_path)
 	close(STDERR_FILENO);
 
 	/* Write pid file */
-	{
+	if (pid_path) {
 		FILE *file = fopen(pid_path, "w");
+
+		void daemon_exit(void)
+		{
+			log_msg(LOG_INFO, "daemon proccess with pid %d stopped\n", getpid());
+			if (!access(pid_path, F_OK)) {
+				if (unlink(pid_path))
+					log_msg(LOG_ERR, "error removing pid file: %m: %s\n", pid_path);
+			}
+		}
 		if (file) {
 			if (fprintf(file, "%d", pid) < 0)
 				log_msg(LOG_ERR, "%s: error writing pid file: %m\n", pid_path);
@@ -145,10 +161,24 @@ static void daemonize(const char *pid_path)
 		} else {
 			log_msg(LOG_ERR, "%s: error opening pid file: %m\n", pid_path);
 		}
+
+		atexit(daemon_exit);
 	}
 
 	log_msg(LOG_INFO, "daemon proccess started with pid %d\n", pid);
-	atexit(daemon_exit);
+}
+
+
+static int parse_unsigned_int(unsigned int *value, const char *str)
+{
+	unsigned long tmp;
+	char *end;
+
+	tmp = strtoul(str, &end, 10);
+	if (!*str || *end || (tmp > UINT32_MAX && tmp != -1))
+		return -1;
+	*value = tmp == -1 ? UINT32_MAX : (unsigned int) tmp;
+	return 0;
 }
 
 
@@ -159,71 +189,98 @@ const char *argp_program_bug_address =
 
 int main(int argc, char *argv[])
 {
-	int rc, n, restart_requested, fd = -1, background = 0;
-	unsigned int snaplen = 0;
-	char *dev_path = DEV_PATH, *pid_path = PID_PATH;
-	FILE *log_file = NULL;
-	char *mode = "w";
-	char buf[8192];
-
+	int out_fd = -1, background = 0, use_splice = 1, verboseness = 0;
+	char *buf = NULL, *dev_path = DEV_PATH, *pid_path = NULL, *out_path = NULL;
+	int restart_requested, dev_fd, pipe_fd[2];
+	ssize_t n, m;
+	unsigned int snaplen = 0, buflen = 8192;
+	ssize_t (*read_dev)(void);
+	ssize_t (*write_out)(void);
+	
 	struct argp_option options[] = {
-		{"append", 'a', 0, 0, "open output in append mode"},
 		{"background", 'b', 0, 0, "background (daemonize) process after starting"},
 		{"device", 'd', "DEVICE", 0, "read events from DEVICE (default: " DEV_PATH ")"},
-		{"output", 'o', "FILE", 0, "write events to FILE (default: " LOG_PATH ")"},
-		{"pid-file", 'p', "FILE", 0, "write process ID to FILE (default: " PID_PATH ")"},
+		{"buflen", 'l', "BYTES", 0, "set buffer length; implies -n (default: 8192)"},
+		{"no-splice", 'n', 0, 0, "use read()/write() instead of splice"},
+		{"pid-file", 'p', "FILE", 0, "write process ID to FILE (assumes -b)"},
+		{"quiet", 'q', 0, 0, "decrease verboseness of debug output"},
 		{"snaplen", 's', "BYTES", 0, "set maximum packet capture size to BYTES bytes"},
+		{"verbose", 'v', 0, 0, "increase verboseness of debug output"},
 		{0},
 	};
 
 	error_t parse_opt(int key, char *arg, struct argp_state *state)
 	{
 		switch (key) {
-		case 'a':
-			mode = "a";
-			break;
 		case 'b':
 			background = 1;
 			break;
 		case 'd':
 			dev_path = arg;
 			break;
-		case 'o':
-			log_path = arg;
+		case 'l':
+			if (parse_unsigned_int(&buflen, arg))
+				argp_error(state, "invalid buflen: %s\n", arg);
+			use_splice = 0;
+			break;
+		case 'n':
+			use_splice = 0;
 			break;
 		case 'p':
+			background = 1;
 			pid_path = arg;
 			break;
-		case 's':
-		{
-			unsigned long tmp;
-			char *end;
-			tmp = strtoul(arg, &end, 10);
-			if (!*arg || *end || (tmp > UINT32_MAX && tmp != -1))
-				argp_error(state, "invalid snaplen: %s\n", arg);
-			snaplen = tmp == -1 ? UINT32_MAX : (unsigned int) tmp;
+		case 'q':
+			verboseness--;
 			break;
-		}
+		case 's':
+			if (parse_unsigned_int(&snaplen, arg))
+				argp_error(state, "invalid snaplen: %s\n", arg);
+			break;
+		case 'v':
+			verboseness++;
+			break;
 		case ARGP_KEY_ARG:
-			argp_error(state, "too many arguments");
+			if (!state->arg_num)
+				out_path = arg;
+			else
+				return ARGP_ERR_UNKNOWN;
+			break;
 		default:
 			return ARGP_ERR_UNKNOWN;
 		}
 		return 0;
 	}
 
-	struct argp argp = {options, parse_opt, NULL,
+	struct argp argp = {options, parse_opt, "[OUTPUT_FILE]",
 			"Log Hone events to a file.", NULL, NULL, NULL};
 
-	if ((rc = argp_parse(&argp, argc, argv, 0, NULL, NULL)))
-		err(EX_OSERR, NULL);
+	if (argp_parse(&argp, argc, argv, 0, NULL, NULL))
+		err(EX_OSERR, "argp_parse() failed");
 
-	/*
-	printf("OPTIONS: background=%d, device=\"%s\", mode=\"%s\", "
-			"output=\"%s\", pid-file=\"%s\", snaplen=%u\n",
-			background, dev_path, mode, log_path, pid_path, snaplen);
-	exit(EX_OK);
-	*/
+	if (verboseness > 0)
+		verbose1 = log_stderr;
+	if (verboseness > 1)
+		verbose2 = log_stderr;
+	if (verboseness > 2)
+		verbose3 = log_stderr;
+
+	verbose2("Options:\n");
+	verbose2("   background: %s\n", background ? "yes" : "no");
+	verbose2("   buffer size: ");
+	if (use_splice)
+		verbose2("unused\n");
+	else
+		verbose2("%u\n", buflen);
+	verbose2("   input device: %s\n", dev_path);
+	verbose2("   output file: %s\n", out_path ?: "<standard output>");
+	verbose2("   pid file: %s\n", pid_path ?: "");
+	verbose2("   snaplen: %u\n", snaplen);
+	verbose2("   use splice: %s\n", use_splice ? "yes" : "no");
+	verbose2("   verbosity level: %d\n", verboseness);
+
+	if (verboseness > 3)
+		err(EX_USAGE, "verboseness limit exceeded");
 
 	if (background)
 		daemonize(pid_path);
@@ -232,77 +289,104 @@ int main(int argc, char *argv[])
 	signal(SIGINT, sighandler);
 	signal(SIGTERM, sighandler);
 
-	void close_log(void)
+	ssize_t splice_read(void)
 	{
-		if (fclose(log_file))
-			log_msg(LOG_ERR, "%s: fclose() failed: %m\n", log_path, rc);
-		log_file = NULL;
+		return splice(dev_fd, NULL, pipe_fd[1], NULL, 65536, 0);
 	}
 
-	fd = open(dev_path, O_RDONLY, 0);
-	if (fd == -1) {
-		log_msg(LOG_ERR, "%s: open() failed: %m:\n", dev_path);
-		exit(EX_NOINPUT);
+	ssize_t splice_write(void)
+	{
+		return splice(pipe_fd[0], NULL, out_fd, NULL, n, 0);
 	}
-	if (snaplen && ioctl(fd, HEIO_SET_SNAPLEN, snaplen) == -1) {
-		log_msg(LOG_ERR, "ioctl() failed: %m\n");
-		exit(EX_IOERR);
+
+	ssize_t conventional_read(void)
+	{
+		return read(dev_fd, buf, buflen);
 	}
+
+	ssize_t conventional_write(void)
+	{
+		return write(out_fd, buf, n);
+	}
+
+	if (use_splice) {
+		if (pipe(pipe_fd))
+			err(EX_OSERR, "pipe() failed");
+		read_dev = splice_read;
+		write_out = splice_write;
+	} else {
+		if (!(buf = (typeof(buf)) malloc(buflen)))
+			err(EX_OSERR, "malloc() failed");
+		read_dev = conventional_read;
+		write_out = conventional_write;
+	}
+
+	if ((dev_fd = open(dev_path, O_RDONLY, 0)) == -1)
+		err(EX_NOINPUT, "open() failed on \"%s\"", dev_path);
+	if (snaplen && ioctl(dev_fd, HEIO_SET_SNAPLEN, snaplen) == -1)
+		err(EX_IOERR, "set snaplen ioctl() failed");
+
+	void close_log(void)
+	{
+		if (close(out_fd))
+			err(EX_OSERR, "close() failed on \"%s\"", out_path);
+		out_fd = -1;
+	}
+
 
 restart:
 	restart = 0;
 	restart_requested = 0;
 
-	if (log_file)
+	if (out_fd != -1)
 		close_log();
-	if (!strcmp(log_path, "-") && !(log_file = fdopen(STDOUT_FILENO, "w"))) {
-		log_msg(LOG_ERR, "stdout: fdopen() failed: %m\n");
-		exit(EX_CANTCREAT);
-	} else if (!(log_file = fopen(log_path, mode))) {
-		log_msg(LOG_ERR, "%s: fopen() failed: %m\n", log_path);
-		exit(EX_CANTCREAT);
-	}
-	mode = "a";
+	if (!out_path || !strcmp(out_path, "-")) {
+		if ((out_fd = dup(STDOUT_FILENO)) == -1)
+			err(EX_CANTCREAT, "dup() failed on stdout");
+	} else if ((out_fd = open(out_path,
+					O_WRONLY | O_CREAT | O_LARGEFILE | O_TRUNC, 00664)) == -1)
+		err(EX_CANTCREAT, "open() failed on \"%s\"", out_path);
 
 	for (;;) {
 		if ((restart || done) && !restart_requested) {
-			if (ioctl(fd, HEIO_RESTART) == -1) {
-				log_msg(LOG_ERR, "ioctl() failed: %m\n");
-				exit(EX_IOERR);
-			}
-			log_msg(LOG_DEBUG, "Requesting device restart.\n");
+			if (ioctl(dev_fd, HEIO_RESTART) == -1)
+				err(EX_OSERR, "reset ioctl() failed");
+			verbose1("Requesting device restart.\n");
 			restart_requested = 1;
 		}
 
-		if ((n = read(fd, buf, sizeof(buf))) == -1) {
-			if (errno != EINTR && errno != EAGAIN) {
-				log_msg(LOG_ERR, "%s: read failure: %m\n", dev_path);
-				goto out;
-			}
+		if ((n = read_dev()) == -1) {
+			if (errno != EINTR && errno != EAGAIN)
+				err(EX_OSERR, "reading from device failed");
 			continue;
 		}
 
-		if (!n) {
-			log_msg(LOG_DEBUG, "Device restarted.\n");
-			if (done || ioctl(fd, HEIO_GET_AT_HEAD) <= 0)
-				goto out;
-			log_msg(LOG_DEBUG, "Reopening log file.\n");
-			goto restart;
+		verbose3("Read %ld bytes\n", n);
+		while (n > 0) {
+			if ((m = write_out()) == -1) {
+				if (errno != EINTR && errno != EAGAIN)
+					err(EX_OSERR, "writing to output failed");
+				continue;
+			}
+			verbose3("Wrote %ld bytes\n", m);
+			n -= m;
 		}
 
-		while ((n -= fwrite(buf, 1, n, log_file))) {
-			if (ferror(log_file) && (errno == EINTR || errno == EAGAIN))
-				continue;
-			log_msg(LOG_ERR, "%s: write failure: %m\n", log_path);
-			goto out;
+		if (restart_requested && ioctl(dev_fd, HEIO_GET_AT_HEAD)) {
+			verbose1("Device restarted.\n");
+			if (done)
+				break;
+			verbose1("Reopening log file.\n");
+			goto restart;
 		}
 	}
 
-out:
 	close_log();
-	if (fd != -1)
-		close(fd);
+	close(dev_fd);
+	close(pipe_fd[0]);
+	close(pipe_fd[1]);
+	free(buf);
 
-	exit(done ? EX_OK : EX_SOFTWARE);
+	exit(EX_OK);
 }
 
