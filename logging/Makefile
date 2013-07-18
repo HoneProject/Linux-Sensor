@@ -8,17 +8,20 @@
 # Author: Brandon Carpenter
 #
 
-all: honelogd
+DESTDIR ?= /usr/local/bin
+HONEDIR ?= ../src
+
+all: honeread
 
 clean:
-	-rm -f honelogd
+	-rm -f honeread
 
-honelogd: honelogd.c
-	gcc -Wall -O2 $(CFLAGS) -I../src -o $@ $<
+honeread: honeread.c
+	gcc -Wall -O2 $(CFLAGS) -I$(HONEDIR) -o $@ $<
 
-install: honelogd
-	install $^ /usr/local/sbin
+install: honeread
+	install -m 0755 $^ "$(DESTDIR)"
 
 uninstall:
-	rm /usr/local/sbin/honelogd
+	rm -f "$(DESTDIR)/honeread"
 

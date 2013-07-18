@@ -1,5 +1,5 @@
 /*
- * honelogd - Log daemon for hone character device
+ * honeread - Example reader for hone character device
  *
  * Copyright (C) 2011 Battelle Memorial Institute
  *
@@ -8,6 +8,10 @@
  * See ../src/DISCLAIMER for additional disclaimers.
  *
  * Author: Brandon Carpenter
+ *
+ * honeread is a rewrite of honelogd. The SysV daemon features were
+ * removed in favor of new-style daemon behavior used in systemd. Those
+ * requiring SysV behavior should use honeread with start-stop-daemon.
  */
 
 #define _FILE_OFFSET_BITS 64
@@ -93,7 +97,7 @@ static int parse_unsigned_int(unsigned int *value, const char *str)
 }
 
 
-const char *argp_program_version = "honelogd 0.2";
+const char *argp_program_version = "honeread 0.9";
 const char *argp_program_bug_address =
 		"Brandon Carpenter <brandon.carpenter@pnnl.gov>";
 
@@ -225,14 +229,14 @@ int main(int argc, char *argv[])
 	}
 
 	if ((dev_fd = open(dev_path, O_RDONLY, 0)) == -1)
-		err(EX_NOINPUT, "open() failed on \"%s\"", dev_path);
+		err(EX_NOINPUT, "open() failed on %s", dev_path);
 	if (snaplen && ioctl(dev_fd, HEIO_SET_SNAPLEN, snaplen) == -1)
 		err(EX_IOERR, "set snaplen ioctl() failed");
 
 	void close_log(void)
 	{
 		if (close(out_fd))
-			err(EX_OSERR, "close() failed on \"%s\"", out_path);
+			err(EX_OSERR, "close() failed on %s", out_path);
 		out_fd = -1;
 	}
 
@@ -248,7 +252,7 @@ restart:
 	} else {
 		if ((out_fd = open(out_path,
 					O_WRONLY | O_CREAT | O_LARGEFILE | truncate, 00664)) == -1)
-			err(EX_CANTCREAT, "open() failed on \"%s\"", out_path);
+			err(EX_CANTCREAT, "open() failed on %s", out_path);
 		if (!truncate && lseek(out_fd, 0, SEEK_END) == (off_t) -1)
 			err(EX_OSERR, "error seeking to end of output file");
 	}
