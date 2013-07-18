@@ -98,7 +98,7 @@ const char *argp_program_bug_address =
 
 int main(int argc, char *argv[])
 {
-	int out_fd = -1, use_splice = 1, verboseness = 0;
+	int out_fd = -1, use_splice = 1, truncate = O_TRUNC, verboseness = 0;
 	char *buf = NULL, *dev_path = DEV_PATH, *out_path = NULL;
 	int restart_requested, dev_fd, pipe_fd[2];
 	ssize_t n, m;
@@ -107,6 +107,7 @@ int main(int argc, char *argv[])
 	ssize_t (*write_out)(void);
 	
 	struct argp_option options[] = {
+		{"append", 'a', 0, 0, "append new records instead of overwriting"},
 		{"device", 'd', "DEVICE", 0, "read events from DEVICE (default: " DEV_PATH ")"},
 		{"buflen", 'l', "BYTES", 0, "set buffer length; implies -n (default: 8192)"},
 		{"no-splice", 'n', 0, 0, "use read()/write() instead of splice"},
@@ -119,6 +120,9 @@ int main(int argc, char *argv[])
 	error_t parse_opt(int key, char *arg, struct argp_state *state)
 	{
 		switch (key) {
+		case 'a':
+			truncate = 0;
+			break;
 		case 'd':
 			dev_path = arg;
 			break;
@@ -237,9 +241,13 @@ restart:
 	if (!out_path || !strcmp(out_path, "-")) {
 		if ((out_fd = dup(STDOUT_FILENO)) == -1)
 			err(EX_CANTCREAT, "dup() failed on stdout");
-	} else if ((out_fd = open(out_path,
-					O_WRONLY | O_CREAT | O_LARGEFILE | O_TRUNC, 00664)) == -1)
-		err(EX_CANTCREAT, "open() failed on \"%s\"", out_path);
+	} else {
+		if ((out_fd = open(out_path,
+					O_WRONLY | O_CREAT | O_LARGEFILE | truncate, 00664)) == -1)
+			err(EX_CANTCREAT, "open() failed on \"%s\"", out_path);
+		if (!truncate && lseek(out_fd, 0, SEEK_END) == (off_t) -1)
+			err(EX_OSERR, "error seeking to end of output file");
+	}
 
 	for (;;) {
 		if ((restart || done) && !restart_requested) {
@@ -255,6 +263,14 @@ restart:
 			continue;
 		}
 
+		if (!n) {
+			verbose1("Device restarted.\n");
+			if (done || ioctl(dev_fd, HEIO_GET_AT_HEAD) <= 0)
+				break;
+			verbose1("Reopening log file.\n");
+			goto restart;
+		}
+
 		verbose3("Read %ld bytes\n", n);
 		while (n > 0) {
 			if ((m = write_out()) == -1) {
@@ -264,14 +280,6 @@ restart:
 			}
 			verbose3("Wrote %ld bytes\n", m);
 			n -= m;
-		}
-
-		if (restart_requested && ioctl(dev_fd, HEIO_GET_AT_HEAD)) {
-			verbose1("Device restarted.\n");
-			if (done)
-				break;
-			verbose1("Reopening log file.\n");
-			goto restart;
 		}
 	}
 
