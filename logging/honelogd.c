@@ -13,7 +13,6 @@
 #define _FILE_OFFSET_BITS 64
 #define _GNU_SOURCE
 
-#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -22,12 +21,10 @@
 #include <string.h>
 #include <err.h>
 #include <sysexits.h>
-
 #include <argp.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <syslog.h>
 #include <signal.h>
 
 #include "honeevent.h"
@@ -35,9 +32,6 @@
 
 #define DEV_PATH "/dev/hone"
 
-
-static void stdlog(int priority, const char *format, ...);
-static void (*log_msg)(int priority, const char *format, ...) = stdlog;
 
 static sig_atomic_t done = 0;
 static sig_atomic_t restart = 0;
@@ -78,95 +72,10 @@ static int nolog(const char *format, ...)
 	return 0;
 }
 
+
 static int (*verbose1)(const char *format, ...) = nolog;
 static int (*verbose2)(const char *format, ...) = nolog;
 static int (*verbose3)(const char *format, ...) = nolog;
-
-
-static void stdlog(int priority, const char *format, ...)
-{
-	va_list args;
-
-	va_start(args, format);
-
-	if (priority & LOG_INFO) {
-		vprintf(format, args);
-		fflush(stdout);
-	} else {
-		fprintf(stderr, "%s: error: ", program_invocation_name);
-		vfprintf(stderr, format, args);
-		fflush(stderr);
-	}
-
-	va_end(args);
-}
-
-
-static void daemonize(const char *pid_path)
-{
-	pid_t pid, sid;
-
-	/* Fork the daemon process */
-	pid = fork();
-	if (pid < 0) {
-		log_msg(LOG_ERR, "fork() failed: %m\n");
-		exit(EX_OSERR);
-	} else if (pid > 0) {
-		exit(EX_OK);
-	}
-
-	/* Get pid of child (current) process */
-	pid = getpid();
-
-	/* Change the file mode mask */
-	umask(0022);
-
-	openlog(program_invocation_short_name, 0, LOG_DAEMON);
-	log_msg = syslog;
-
-	/* Create a new session ID for the daemon process */
-	sid = setsid();
-	if (sid < 0) {
-		log_msg(LOG_ERR, "setsid() failed: %m\n");
-		exit(EX_OSERR);
-	}
-
-	/* Change the current working directory */
-	if (chdir("/") < 0) {
-		log_msg(LOG_ERR, "chdir() failed: %m: /\n");
-		exit(EX_OSERR);
-	}
-
-	/* Close standard file descriptors */
-	close(STDIN_FILENO);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);
-
-	/* Write pid file */
-	if (pid_path) {
-		FILE *file = fopen(pid_path, "w");
-
-		void daemon_exit(void)
-		{
-			log_msg(LOG_INFO, "daemon proccess with pid %d stopped\n", getpid());
-			if (!access(pid_path, F_OK)) {
-				if (unlink(pid_path))
-					log_msg(LOG_ERR, "error removing pid file: %m: %s\n", pid_path);
-			}
-		}
-		if (file) {
-			if (fprintf(file, "%d", pid) < 0)
-				log_msg(LOG_ERR, "%s: error writing pid file: %m\n", pid_path);
-			fclose(file);
-		} else {
-			log_msg(LOG_ERR, "%s: error opening pid file: %m\n", pid_path);
-		}
-
-		atexit(daemon_exit);
-	}
-
-	log_msg(LOG_INFO, "daemon proccess started with pid %d\n", pid);
-}
 
 
 static int parse_unsigned_int(unsigned int *value, const char *str)
@@ -189,8 +98,8 @@ const char *argp_program_bug_address =
 
 int main(int argc, char *argv[])
 {
-	int out_fd = -1, background = 0, use_splice = 1, verboseness = 0;
-	char *buf = NULL, *dev_path = DEV_PATH, *pid_path = NULL, *out_path = NULL;
+	int out_fd = -1, use_splice = 1, verboseness = 0;
+	char *buf = NULL, *dev_path = DEV_PATH, *out_path = NULL;
 	int restart_requested, dev_fd, pipe_fd[2];
 	ssize_t n, m;
 	unsigned int snaplen = 0, buflen = 8192;
@@ -198,11 +107,9 @@ int main(int argc, char *argv[])
 	ssize_t (*write_out)(void);
 	
 	struct argp_option options[] = {
-		{"background", 'b', 0, 0, "background (daemonize) process after starting"},
 		{"device", 'd', "DEVICE", 0, "read events from DEVICE (default: " DEV_PATH ")"},
 		{"buflen", 'l', "BYTES", 0, "set buffer length; implies -n (default: 8192)"},
 		{"no-splice", 'n', 0, 0, "use read()/write() instead of splice"},
-		{"pid-file", 'p', "FILE", 0, "write process ID to FILE (assumes -b)"},
 		{"quiet", 'q', 0, 0, "decrease verboseness of debug output"},
 		{"snaplen", 's', "BYTES", 0, "set maximum packet capture size to BYTES bytes"},
 		{"verbose", 'v', 0, 0, "increase verboseness of debug output"},
@@ -212,9 +119,6 @@ int main(int argc, char *argv[])
 	error_t parse_opt(int key, char *arg, struct argp_state *state)
 	{
 		switch (key) {
-		case 'b':
-			background = 1;
-			break;
 		case 'd':
 			dev_path = arg;
 			break;
@@ -225,10 +129,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'n':
 			use_splice = 0;
-			break;
-		case 'p':
-			background = 1;
-			pid_path = arg;
 			break;
 		case 'q':
 			verboseness--;
@@ -266,7 +166,6 @@ int main(int argc, char *argv[])
 		verbose3 = log_stderr;
 
 	verbose2("Options:\n");
-	verbose2("   background: %s\n", background ? "yes" : "no");
 	verbose2("   buffer size: ");
 	if (use_splice)
 		verbose2("unused\n");
@@ -274,16 +173,12 @@ int main(int argc, char *argv[])
 		verbose2("%u\n", buflen);
 	verbose2("   input device: %s\n", dev_path);
 	verbose2("   output file: %s\n", out_path ?: "<standard output>");
-	verbose2("   pid file: %s\n", pid_path ?: "");
 	verbose2("   snaplen: %u\n", snaplen);
 	verbose2("   use splice: %s\n", use_splice ? "yes" : "no");
 	verbose2("   verbosity level: %d\n", verboseness);
 
 	if (verboseness > 3)
 		err(EX_USAGE, "verboseness limit exceeded");
-
-	if (background)
-		daemonize(pid_path);
 
 	signal(SIGHUP, sighandler);
 	signal(SIGINT, sighandler);
@@ -332,7 +227,6 @@ int main(int argc, char *argv[])
 			err(EX_OSERR, "close() failed on \"%s\"", out_path);
 		out_fd = -1;
 	}
-
 
 restart:
 	restart = 0;
