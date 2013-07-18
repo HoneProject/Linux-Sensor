@@ -14,6 +14,8 @@
 #define _GNU_SOURCE
 
 #include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -100,7 +102,7 @@ int main(int argc, char *argv[])
 {
 	int out_fd = -1, use_splice = 1, truncate = O_TRUNC, verboseness = 0;
 	char *buf = NULL, *dev_path = DEV_PATH, *out_path = NULL;
-	int restart_requested, dev_fd, pipe_fd[2];
+	int restart_requested, dev_fd, pipe_in, pipe_out, pipe_fd[2];
 	ssize_t n, m;
 	unsigned int snaplen = 0, buflen = 8192;
 	ssize_t (*read_dev)(void);
@@ -190,12 +192,12 @@ int main(int argc, char *argv[])
 
 	ssize_t splice_read(void)
 	{
-		return splice(dev_fd, NULL, pipe_fd[1], NULL, 65536, 0);
+		return splice(dev_fd, NULL, pipe_in, NULL, 65536, 0);
 	}
 
 	ssize_t splice_write(void)
 	{
-		return splice(pipe_fd[0], NULL, out_fd, NULL, n, 0);
+		return splice(pipe_out, NULL, out_fd, NULL, n, 0);
 	}
 
 	ssize_t conventional_read(void)
@@ -211,6 +213,8 @@ int main(int argc, char *argv[])
 	if (use_splice) {
 		if (pipe(pipe_fd))
 			err(EX_OSERR, "pipe() failed");
+		pipe_out = pipe_fd[0];
+		pipe_in = pipe_fd[1];
 		read_dev = splice_read;
 		write_out = splice_write;
 	} else {
@@ -249,6 +253,19 @@ restart:
 			err(EX_OSERR, "error seeking to end of output file");
 	}
 
+	if (use_splice) {
+		int is_fifo = 0;
+		struct stat st;
+
+		if (fstat(out_fd, &st))
+			warn("fstat() failed");
+		else
+			is_fifo = S_ISFIFO(st.st_mode);
+		pipe_in = is_fifo ? out_fd : pipe_fd[1];
+
+		verbose2("output file is%s a FIFO\n", is_fifo ? "" : " not");
+	}
+
 	for (;;) {
 		if ((restart || done) && !restart_requested) {
 			if (ioctl(dev_fd, HEIO_RESTART) == -1)
@@ -272,6 +289,9 @@ restart:
 		}
 
 		verbose3("Read %ld bytes\n", n);
+		if (out_fd == pipe_in)  /* spliced directly to FIFO */
+			continue;
+
 		while (n > 0) {
 			if ((m = write_out()) == -1) {
 				if (errno != EINTR && errno != EAGAIN)
