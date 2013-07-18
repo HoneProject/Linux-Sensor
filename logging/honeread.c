@@ -163,7 +163,8 @@ int main(int argc, char *argv[])
 	}
 
 	struct argp argp = {options, parse_opt, "[OUTPUT_FILE]",
-			"Log Hone events to a file.", NULL, NULL, NULL};
+			"Read Hone events and write to a file or standard output.",
+			NULL, NULL, NULL};
 
 	if (argp_parse(&argp, argc, argv, 0, NULL, NULL))
 		err(EX_OSERR, "argp_parse() failed");
@@ -233,7 +234,7 @@ int main(int argc, char *argv[])
 	if (snaplen && ioctl(dev_fd, HEIO_SET_SNAPLEN, snaplen) == -1)
 		err(EX_IOERR, "set snaplen ioctl() failed");
 
-	void close_log(void)
+	void close_out(void)
 	{
 		if (close(out_fd))
 			err(EX_OSERR, "close() failed on %s", out_path);
@@ -245,7 +246,7 @@ restart:
 	restart_requested = 0;
 
 	if (out_fd != -1)
-		close_log();
+		close_out();
 	if (!out_path || !strcmp(out_path, "-")) {
 		if ((out_fd = dup(STDOUT_FILENO)) == -1)
 			err(EX_CANTCREAT, "dup() failed on stdout");
@@ -288,7 +289,7 @@ restart:
 			verbose1("Device restarted.\n");
 			if (done || ioctl(dev_fd, HEIO_GET_AT_HEAD) <= 0)
 				break;
-			verbose1("Reopening log file.\n");
+			verbose1("Reopening output file.\n");
 			goto restart;
 		}
 
@@ -307,7 +308,7 @@ restart:
 		}
 	}
 
-	close_log();
+	close_out();
 	close(dev_fd);
 	close(pipe_fd[0]);
 	close(pipe_fd[1]);
