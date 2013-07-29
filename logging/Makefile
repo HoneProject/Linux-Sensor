@@ -8,7 +8,8 @@
 # Author: Brandon Carpenter
 #
 
-DESTDIR ?= /usr/local/bin
+PREFIX ?= /usr/local/bin
+DESTDIR ?= ""
 HONEDIR ?= ../src
 
 all: honeread
@@ -20,8 +21,8 @@ honeread: honeread.c
 	gcc -Wall -O2 $(CFLAGS) -I$(HONEDIR) -o $@ $<
 
 install: honeread
-	install -m 0755 $^ "$(DESTDIR)"
+	install -Dm 0755 $^ "$(DESTDIR)$(PREFIX)/$^"
 
 uninstall:
-	rm -f "$(DESTDIR)/honeread"
+	rm -f "$(DESTDIR)$(PREFIX)/honeread"
 
