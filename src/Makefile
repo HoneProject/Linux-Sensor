@@ -217,6 +217,9 @@ unload:
 	@(( $$UID )) && SU=sudo || unset SU; \
 		for mod in $(HONE_MODULES); do echo $$mod; done | tac | xargs $$SU rmmod
 
+System.map: $(KSRC)/vmlinux
+	nm $< > $@
+
 PHONY: all prereq_check help modules modules_install install clean distclean \
 	snapshot-changelog packages deb rpm tarball bump-version load unload
 
