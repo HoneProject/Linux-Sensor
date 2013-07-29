@@ -1,0 +1,15 @@
+# Hone logging service for systemd
+
+[Unit]
+Description=Hone Logging Daemon
+Before=network.target
+
+[Service]
+ExecStart=/usr/bin/honeread -a -s 96 /var/log/hone.pcapng
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
