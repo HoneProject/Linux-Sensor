@@ -137,7 +137,7 @@ help:
 modules: version.h
 	$(MAKE) -C $(KSRC) M=$(CURDIR) modules
 
-modules_install install:
+modules_install install: modules
 	$(MAKE) -C $(KSRC) M=$(CURDIR) modules_install
 
 clean:
