@@ -1,0 +1,61 @@
+
+pkgname=hone-sensor-git
+pkgver=20130729
+pkgrel=1
+pkgdesc="Hone device driver for correlating captured packets to processes"
+url="https://github.com/HoneProject/Linux-Sensor"
+license=(GPL2)
+install=hone-sensor.install
+arch=(i686 x86_64)
+backup=(etc/udev/rules.d/60-hone.rules)
+depends=(linux)
+makedepends=(git linux-headers)
+conflicts=(hone-sensor hone-sensor-dkms hone-sensor-dkms-git)
+provides=(hone-sensor)
+options=('!strip')
+if [[ -n "$LOCAL_BUILD" ]]; then
+  echo "Cloning from local filesystem"
+  _giturl="hone-sensor::git+file://$(realpath $PWD/../..)"
+else
+  _giturl="hone-sensor::git+https://github.com/HoneProject/Linux-Sensor.git"
+fi
+source=("$_giturl" "hone-sensor.install.in")
+md5sums=(SKIP '181da4e27ba0331de7e32f8ad268b0e4')
+
+
+prepare() {
+  cd "$startdir"
+
+  _extramodules="$(readlink -f "/usr/lib/modules/${_kernver:-$(uname -r)}/extramodules")"
+
+  sed -r 's@^(extramodules=).*$@\1'"$_extramodules"'@' hone-sensor.install.in > hone-sensor.install
+}
+
+
+build() {
+  cd "$srcdir/hone-sensor/src"
+
+  _modules="/usr/lib/modules/${_kernver:-$(uname -r)}"
+
+  nm "$_modules/build/vmlinux" > System.map
+  make KSRC="$_modules/build" SYSMAP="$PWD/System.map"
+}
+
+
+package() {
+  cd "$srcdir/hone-sensor/src"
+
+  _modules="/usr/lib/modules/${_kernver:-$(uname -r)}"
+
+  make KSRC="$_modules/build" SYSMAP="$PWD/System.map" INSTALL_MOD_PATH="$pkgdir/usr" modules_install
+
+  mv "$pkgdir$_modules/"{extra,$(readlink $_modules/extramodules)}
+  rmdir $pkgdir$_modules
+
+  install -d "$pkgdir/etc/udev/rules.d"
+  install -d "$pkgdir/usr/share/doc/hone"
+  install -m 0644 udev.rules "$pkgdir/etc/udev/rules.d/60-hone.rules"
+  install -m 0444 README "$pkgdir/usr/share/doc/hone/README"
+}
+
+# vim:set ts=2 sw=2 et:
