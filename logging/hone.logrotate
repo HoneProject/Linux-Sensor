@@ -9,7 +9,7 @@
 	daily
 	rotate 20
 	postrotate
-		systemctl try-reload hone.service
+		/usr/bin/systemctl try-restart hone.service
 	endscript
 }
 
