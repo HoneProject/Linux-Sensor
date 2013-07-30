@@ -1,0 +1,15 @@
+
+# /etc/logrotate.d/hone
+# logrotate script for honeread.
+# Use with Hone systemd unit and logrotate.
+
+/var/log/hone.pcapng {
+	compress
+	delaycompress
+	daily
+	rotate 20
+	postrotate
+		systemctl try-reload hone.service
+	endscript
+}
+

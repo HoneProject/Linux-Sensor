@@ -1,0 +1,42 @@
+
+_pkgname=hone-reader
+pkgname=$_pkgname-git
+pkgver=20130729
+pkgrel=1
+pkgdesc="Hone reader and syslogd service for packet-process correlation"
+url="https://github.com/HoneProject/Linux-Sensor"
+license=(GPL2)
+arch=(i686 x86_64)
+backup=(etc/udev/rules.d/60-hone.rules)
+#depends=(hone-sensor)
+makedepends=(git)
+optdepends=('systemd: start hone captures on system startup'
+            'logrotate: rotate capture files')
+conflicts=(hone-reader)
+provides=(hone-reader)
+if [[ -n "$LOCAL_BUILD" ]]; then
+  echo "Cloning from local filesystem"
+  _giturl="$_pkgname::git+file://$(realpath $PWD/../..)"
+else
+  _giturl="$_pkgname::git+https://github.com/HoneProject/Linux-Sensor.git"
+fi
+source=("$_giturl")
+md5sums=(SKIP)
+
+
+build() {
+  cd "$srcdir/$_pkgname/logging"
+
+  make
+}
+
+
+package() {
+  cd "$srcdir/$_pkgname/logging"
+
+  make install DESTDIR="$pkgdir" PREFIX="/usr/bin"
+  install -Dm 0644 hone.service "$pkgdir/usr/lib/systemd/system/hone.service"
+  install -Dm 0644 hone.logrotate "$pkgdir/etc/logrotate.d/hone"
+}
+
+# vim:set ts=2 sw=2 et:
