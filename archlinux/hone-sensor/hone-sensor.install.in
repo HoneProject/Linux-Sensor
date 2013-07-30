@@ -2,7 +2,7 @@ extramodules=/usr/lib/modules/$(uname -r)/extramodules
 
 post_install() {
   post_upgrade
-  getent group hone > /dev/null || groupadd --system hone
+  getent group hone >/dev/null || groupadd --system hone
 }
 
 post_upgrade() {
@@ -11,8 +11,8 @@ post_upgrade() {
 
 post_remove() {
   post_upgrade
-  if getent group hone > /dev/null; then
-    echo "Not removing 'hone' group."
+  if getent group hone >/dev/null; then
+    echo "==> 'hone' group was not removed."
   fi
 }
 

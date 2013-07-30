@@ -8,7 +8,7 @@ url="https://github.com/HoneProject/Linux-Sensor"
 license=(GPL2)
 arch=(i686 x86_64)
 backup=(etc/udev/rules.d/60-hone.rules)
-#depends=(hone-sensor)
+depends=(hone-sensor)
 makedepends=(git)
 optdepends=('systemd: start hone captures on system startup'
             'logrotate: rotate capture files')
