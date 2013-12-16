@@ -60,14 +60,17 @@ static inline int process_notifier_notify(
 
 static int fork_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	process_notifier_notify(PROC_FORK,
-			(struct task_struct *) regs_return_value(regs));
+	struct task_struct *task = (struct task_struct *) regs_return_value(regs);
+
+	if (!IS_ERR(task))
+		process_notifier_notify(PROC_FORK, task);
 	return 0;
 }
 
 static int exec_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
-	process_notifier_notify(PROC_EXEC, current);
+	if (!(int) regs_return_value(regs))
+		process_notifier_notify(PROC_EXEC, current);
 	return 0;
 }
 
