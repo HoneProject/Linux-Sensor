@@ -25,7 +25,6 @@
 #include <net/icmp.h>
 #include <net/sock.h>
 #include <net/inet_sock.h>
-#include <net/netfilter/nf_tproxy_core.h>
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 #include <net/ipv6.h>
@@ -35,13 +34,6 @@
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 #define XT_SOCKET_HAVE_CONNTRACK 1
 #include <net/netfilter/nf_conntrack.h>
-#endif
-
-// Not defined in older kernels
-#ifndef NFT_LOOKUP_ANY
-#define NFT_LOOKUP_ANY         0
-#define NFT_LOOKUP_LISTENER    1
-#define NFT_LOOKUP_ESTABLISHED 2
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
@@ -108,75 +100,6 @@ static int extract_icmp4_fields(const struct sk_buff *skb, u8 *protocol,
 	return 0;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
-static inline struct sock *
-__nf_tproxy_get_sock_v4(struct net *net, const u8 protocol,
-		      const __be32 saddr, const __be32 daddr,
-		      const __be16 sport, const __be16 dport,
-		      const struct net_device *in, int lookup_type)
-{
-	struct sock *sk;
-
-	/* look up socket */
-	switch (protocol) {
-	case IPPROTO_TCP:
-		switch (lookup_type) {
-		case NFT_LOOKUP_ANY:
-			sk = __inet_lookup(net, &tcp_hashinfo,
-					   saddr, sport, daddr, dport,
-					   in->ifindex);
-			break;
-		case NFT_LOOKUP_LISTENER:
-			sk = inet_lookup_listener(net, &tcp_hashinfo,
-						    daddr, dport,
-						    in->ifindex);
-
-			/* NOTE: we return listeners even if bound to
-			 * 0.0.0.0, those are filtered out in
-			 * xt_socket, since xt_TPROXY needs 0 bound
-			 * listeners too */
-
-			break;
-		case NFT_LOOKUP_ESTABLISHED:
-			sk = inet_lookup_established(net, &tcp_hashinfo,
-						    saddr, sport, daddr, dport,
-						    in->ifindex);
-			break;
-		default:
-			WARN_ON(1);
-			sk = NULL;
-			break;
-		}
-		break;
-	case IPPROTO_UDP:
-		sk = udp4_lib_lookup(net, saddr, sport, daddr, dport,
-				     in->ifindex);
-		if (sk && lookup_type != NFT_LOOKUP_ANY) {
-			int connected = (sk->sk_state == TCP_ESTABLISHED);
-			int wildcard = (inet_sk(sk)->inet_rcv_saddr == 0);
-
-			/* NOTE: we return listeners even if bound to
-			 * 0.0.0.0, those are filtered out in
-			 * xt_socket, since xt_TPROXY needs 0 bound
-			 * listeners too */
-			if ((lookup_type == NFT_LOOKUP_ESTABLISHED && (!connected || wildcard)) ||
-			    (lookup_type == NFT_LOOKUP_LISTENER && connected)) {
-				sock_put(sk);
-				sk = NULL;
-			}
-		}
-		break;
-	default:
-		WARN_ON(1);
-		sk = NULL;
-	}
-
-	return sk;
-}
-
-#define nf_tproxy_get_sock_v4(...) __nf_tproxy_get_sock_v4(__VA_ARGS__)
-#endif
-
 static struct sock *lookup_v4_sock(const struct sk_buff *skb,
 		const struct net_device *indev)
 {
@@ -235,8 +158,13 @@ static struct sock *lookup_v4_sock(const struct sk_buff *skb,
 	}
 #endif
 
-	if (!(sk = nf_tproxy_get_sock_v4(dev_net(skb->dev), protocol,
-			saddr, daddr, sport, dport, indev, NFT_LOOKUP_ANY)))
+	if (protocol == IPPROTO_TCP)
+		sk = __inet_lookup(dev_net(skb->dev), &tcp_hashinfo,
+				saddr, sport, daddr, dport, indev->ifindex);
+	else
+		sk = udp4_lib_lookup(dev_net(skb->dev),
+				saddr, sport, daddr, dport, indev->ifindex);
+	if (!sk)
 		return NULL;
 
 	/* Ignore sockets listening on INADDR_ANY */
@@ -372,71 +300,6 @@ extern struct sock *__udp6_lib_lookup(struct net *net,
 #define udp6_lib_lookup(net, saddr, sport, daddr, dport, dif) \
 	__udp6_lib_lookup((net), (struct in6_addr *) (saddr), (sport), \
 			(struct in6_addr *) (daddr), (dport), (dif), &udp_table)
-
-
-static inline struct sock *
-nf_tproxy_get_sock_v6(struct net *net, const u8 protocol,
-		      const struct in6_addr *saddr, const struct in6_addr *daddr,
-		      const __be16 sport, const __be16 dport,
-		      const struct net_device *in, int lookup_type)
-{
-	struct sock *sk;
-
-	/* look up socket */
-	switch (protocol) {
-	case IPPROTO_TCP:
-		switch (lookup_type) {
-		case NFT_LOOKUP_ANY:
-			sk = inet6_lookup(net, &tcp_hashinfo,
-					  saddr, sport, daddr, dport,
-					  in->ifindex);
-			break;
-		case NFT_LOOKUP_LISTENER:
-			sk = inet6_lookup_listener(net, &tcp_hashinfo,
-						   daddr, ntohs(dport),
-						   in->ifindex);
-
-			/* NOTE: we return listeners even if bound to
-			 * 0.0.0.0, those are filtered out in
-			 * xt_socket, since xt_TPROXY needs 0 bound
-			 * listeners too */
-
-			break;
-		case NFT_LOOKUP_ESTABLISHED:
-			sk = __inet6_lookup_established(net, &tcp_hashinfo,
-							saddr, sport, daddr, ntohs(dport),
-							in->ifindex);
-			break;
-		default:
-			WARN_ON(1);
-			sk = NULL;
-			break;
-		}
-		break;
-	case IPPROTO_UDP:
-		sk = udp6_lib_lookup(net, saddr, sport, daddr, dport, in->ifindex);
-		if (sk && lookup_type != NFT_LOOKUP_ANY) {
-			int connected = (sk->sk_state == TCP_ESTABLISHED);
-			int wildcard = ipv6_addr_any(&inet6_sk(sk)->rcv_saddr);
-
-			/* NOTE: we return listeners even if bound to
-			 * 0.0.0.0, those are filtered out in
-			 * xt_socket, since xt_TPROXY needs 0 bound
-			 * listeners too */
-			if ((lookup_type == NFT_LOOKUP_ESTABLISHED && (!connected || wildcard)) ||
-			    (lookup_type == NFT_LOOKUP_LISTENER && connected)) {
-				sock_put(sk);
-				sk = NULL;
-			}
-		}
-		break;
-	default:
-		WARN_ON(1);
-		sk = NULL;
-	}
-
-	return sk;
-}
 #  endif
 
 static struct sock *lookup_v6_sock(const struct sk_buff *skb,
@@ -473,9 +336,15 @@ static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 		return NULL;
 	}
 
-	if (!(sk = nf_tproxy_get_sock_v6(dev_net(skb->dev), tproto,
-			saddr, daddr, sport, dport, indev, NFT_LOOKUP_ANY)))
+	if (tproto == IPPROTO_TCP)
+		sk = inet6_lookup(dev_net(skb->dev), &tcp_hashinfo,
+				saddr, sport, daddr, dport, indev->ifindex);
+	else
+		sk = udp6_lib_lookup(dev_net(skb->dev),
+				saddr, sport, daddr, dport, indev->ifindex);
+	if (!sk)
 		return NULL;
+
 
 	/* Ignore sockets listening on INADDR_ANY */
 	if (sk->sk_state != TCP_TIME_WAIT && inet_sk(sk)->inet_rcv_saddr == 0) {
