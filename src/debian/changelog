@@ -1,3 +1,9 @@
+hone (13.12) unstable; urgency=low
+
+  * Bug fix release.
+
+ -- Brandon Carpenter <brandon.carpenter@pnnl.gov>  Tue, 17 Dec 2013 09:11:27 -0800
+
 hone (13.09) unstable; urgency=low
 
   * New snapshot release.
