@@ -310,7 +310,7 @@ static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 	struct sock *sk;
 	struct in6_addr *daddr, *saddr;
 	__be16 dport, sport;
-	int thoff, tproto;
+	int thoff = 0, tproto;
 
 	tproto = ipv6_find_hdr(skb, &thoff, -1, NULL, NULL);
 	if (tproto < 0)
