@@ -104,20 +104,15 @@ static struct sock *lookup_v4_sock(const struct sk_buff *skb,
 		const struct net_device *indev)
 {
 	struct iphdr *iph = ip_hdr(skb);
-	struct udphdr _hdr, *hp = NULL;
 	struct sock *sk;
 	__be32 daddr = 0, saddr = 0;
 	__be16 dport = 0, sport = 0;
 	u8 protocol = 0;
-#ifdef XT_SOCKET_HAVE_CONNTRACK
-	struct nf_conn const *ct;
-	enum ip_conntrack_info ctinfo;
-#endif
 
 	if (iph->protocol == IPPROTO_UDP || iph->protocol == IPPROTO_TCP) {
-		hp = skb_header_pointer(skb, ip_hdrlen(skb),
-					sizeof(_hdr), &_hdr);
-		if (hp == NULL)
+		struct udphdr _hdr, *hp;
+
+		if (!(hp = skb_header_pointer(skb, ip_hdrlen(skb), sizeof(_hdr), &_hdr)))
 			return NULL;
 
 		protocol = iph->protocol;
@@ -137,24 +132,27 @@ static struct sock *lookup_v4_sock(const struct sk_buff *skb,
 #ifdef XT_SOCKET_HAVE_CONNTRACK
 	/* Do the lookup with the original socket address in case this is a
 	 * reply packet of an established SNAT-ted connection. */
+	{
+		enum ip_conntrack_info ctinfo;
+		struct nf_conn const *ct = nf_ct_get(skb, &ctinfo);
 
-	ct = nf_ct_get(skb, &ctinfo);
-	if (ct &&
+		if (ct &&
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
-			!nf_ct_is_untracked(ct) &&
+				!nf_ct_is_untracked(ct) &&
 #else
-			(ct != &nf_conntrack_untracked) &&
+				(ct != &nf_conntrack_untracked) &&
 #endif
-	    ((iph->protocol != IPPROTO_ICMP &&
-	      ctinfo == IP_CT_IS_REPLY + IP_CT_ESTABLISHED) ||
-	     (iph->protocol == IPPROTO_ICMP &&
-	      ctinfo == IP_CT_IS_REPLY + IP_CT_RELATED)) &&
-	    (ct->status & IPS_SRC_NAT_DONE)) {
+				((iph->protocol != IPPROTO_ICMP &&
+						ctinfo == IP_CT_IS_REPLY + IP_CT_ESTABLISHED) ||
+					(iph->protocol == IPPROTO_ICMP &&
+						ctinfo == IP_CT_IS_REPLY + IP_CT_RELATED)) &&
+				(ct->status & IPS_SRC_NAT_DONE)) {
 
-		daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
-		dport = (iph->protocol == IPPROTO_TCP) ?
-			ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.tcp.port :
-			ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port;
+			daddr = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u3.ip;
+			dport = (iph->protocol == IPPROTO_TCP) ?
+				ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.tcp.port :
+				ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple.src.u.udp.port;
+		}
 	}
 #endif
 
@@ -192,30 +190,24 @@ static int extract_icmp6_fields(const struct sk_buff *skb,
 	u8 inside_nexthdr;
 	int inside_hdrlen;
 
-	icmph = skb_header_pointer(skb, outside_hdrlen,
-				   sizeof(_icmph), &_icmph);
-	if (icmph == NULL)
+	if (!(icmph = skb_header_pointer(skb, outside_hdrlen,
+					sizeof(_icmph), &_icmph)))
 		return 1;
-
 	if (icmph->icmp6_type & ICMPV6_INFOMSG_MASK)
 		return 1;
-
-	inside_iph = skb_header_pointer(skb, outside_hdrlen + sizeof(_icmph), sizeof(_inside_iph), &_inside_iph);
-	if (inside_iph == NULL)
+	if (!(inside_iph = skb_header_pointer(skb,
+			outside_hdrlen + sizeof(_icmph), sizeof(_inside_iph), &_inside_iph)))
 		return 1;
+
 	inside_nexthdr = inside_iph->nexthdr;
-
-	inside_hdrlen = SKIPHDR(skb, outside_hdrlen + sizeof(_icmph) + sizeof(_inside_iph), &inside_nexthdr);
-	if (inside_hdrlen < 0)
+	if ((inside_hdrlen = SKIPHDR(skb, outside_hdrlen +
+			sizeof(_icmph) + sizeof(_inside_iph), &inside_nexthdr)) < 0)
 		return 1; /* hjm: Packet has no/incomplete transport layer headers. */
-
-	if (inside_nexthdr != IPPROTO_TCP &&
-	    inside_nexthdr != IPPROTO_UDP)
+	if (inside_nexthdr != IPPROTO_TCP && inside_nexthdr != IPPROTO_UDP)
 		return 1;
 
-	ports = skb_header_pointer(skb, inside_hdrlen,
-				   sizeof(_ports), &_ports);
-	if (ports == NULL)
+	if (!(ports = skb_header_pointer(skb, inside_hdrlen,
+					sizeof(_ports), &_ports)))
 		return 1;
 
 	/* the inside IP packet is the one quoted from our side, thus
@@ -250,25 +242,21 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 			return -ENOENT;
 		}
 
-		hp = skb_header_pointer(skb, start, sizeof(_hdr), &_hdr);
-		if (hp == NULL)
+		if (!(hp = skb_header_pointer(skb, start, sizeof(_hdr), &_hdr)))
 			return -EBADMSG;
 		if (nexthdr == NEXTHDR_FRAGMENT) {
 			unsigned short _frag_off;
-			__be16 *fp;
-			fp = skb_header_pointer(skb,
-						start+offsetof(struct frag_hdr,
-							       frag_off),
-						sizeof(_frag_off),
-						&_frag_off);
-			if (fp == NULL)
+			__be16 *fp = skb_header_pointer(skb, start + offsetof(
+						struct frag_hdr, frag_off), sizeof(_frag_off), &_frag_off);
+
+			if (!fp)
 				return -EBADMSG;
 
 			_frag_off = ntohs(*fp) & ~0x7;
 			if (_frag_off) {
 				if (target < 0 &&
-				    ((!ipv6_ext_hdr(hp->nexthdr)) ||
-				     hp->nexthdr == NEXTHDR_NONE)) {
+						((!ipv6_ext_hdr(hp->nexthdr)) ||
+						hp->nexthdr == NEXTHDR_NONE)) {
 					if (fragoff)
 						*fragoff = _frag_off;
 					return hp->nexthdr;
@@ -293,9 +281,9 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 
 #  if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
 extern struct sock *__udp6_lib_lookup(struct net *net,
-				      struct in6_addr *saddr, __be16 sport,
-				      struct in6_addr *daddr, __be16 dport,
-				      int dif, struct udp_table *udptable);
+		struct in6_addr *saddr, __be16 sport,
+		struct in6_addr *daddr, __be16 dport,
+		int dif, struct udp_table *udptable);
 
 #define udp6_lib_lookup(net, saddr, sport, daddr, dport, dif) \
 	__udp6_lib_lookup((net), (struct in6_addr *) (saddr), (sport), \
@@ -305,32 +293,29 @@ extern struct sock *__udp6_lib_lookup(struct net *net,
 static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 			const struct net_device *indev)
 {
-	struct ipv6hdr *iph = ipv6_hdr(skb);
-	struct udphdr _hdr, *hp = NULL;
 	struct sock *sk;
 	struct in6_addr *daddr, *saddr;
 	__be16 dport, sport;
 	int thoff = 0, tproto;
 
-	tproto = ipv6_find_hdr(skb, &thoff, -1, NULL, NULL);
-	if (tproto < 0)
-		// unable to find transport header in IPv6 packet
-		return NULL;
+	if ((tproto = ipv6_find_hdr(skb, &thoff, -1, NULL, NULL)) < 0)
+		return NULL;   // unable to find transport header in IPv6 packet
 
 	if (tproto == IPPROTO_UDP || tproto == IPPROTO_TCP) {
-		hp = skb_header_pointer(skb, thoff,
-					sizeof(_hdr), &_hdr);
-		if (hp == NULL)
+		struct udphdr _hdr, *hp;
+		struct ipv6hdr *iph;
+
+		if (!(hp = skb_header_pointer(skb, thoff, sizeof(_hdr), &_hdr)))
 			return NULL;
 
+		iph = ipv6_hdr(skb);
 		saddr = &iph->saddr;
 		sport = hp->source;
 		daddr = &iph->daddr;
 		dport = hp->dest;
-
 	} else if (tproto == IPPROTO_ICMPV6) {
-		if (extract_icmp6_fields(skb, thoff, &tproto, &saddr, &daddr,
-					 &sport, &dport))
+		if (extract_icmp6_fields(skb, thoff, &tproto,
+					&saddr, &daddr, &sport, &dport))
 			return NULL;
 	} else {
 		return NULL;
@@ -342,12 +327,9 @@ static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 	else
 		sk = udp6_lib_lookup(dev_net(skb->dev),
 				saddr, sport, daddr, dport, indev->ifindex);
-	if (!sk)
-		return NULL;
-
 
 	/* Ignore sockets listening on INADDR_ANY */
-	if (sk->sk_state != TCP_TIME_WAIT && inet_sk(sk)->inet_rcv_saddr == 0) {
+	if (sk && sk->sk_state != TCP_TIME_WAIT && !inet_sk(sk)->inet_rcv_saddr) {
 		put_sock(sk);
 		return NULL;
 	}
