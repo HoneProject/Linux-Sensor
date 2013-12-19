@@ -222,6 +222,6 @@ System.map: $(KSRC)/vmlinux
 	nm $< > $@
 
 PHONY: all prereq_check help modules modules_install install clean distclean \
-	snapshot-changelog packages deb rpm tarball bump-version load unload
+	packages deb rpm tarball bump-version load unload
 
 endif
