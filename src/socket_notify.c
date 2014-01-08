@@ -4,10 +4,11 @@
  * Licensed under the GNU General Public License Version 2.
  * See LICENSE for the full text of the license.
  * See DISCLAIMER for additional disclaimers.
- * 
+ *
  * Author: Brandon Carpenter
  */
 
+#include <linux/kprobes.h>
 #include <linux/version.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
@@ -27,7 +28,7 @@
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,33)
-#define DECLARE_CREATE_HOOK(NAME) int NAME(struct net *net, struct socket *sock, int protocol, int kern) 
+#define DECLARE_CREATE_HOOK(NAME) int NAME(struct net *net, struct socket *sock, int protocol, int kern)
 #define CALL_CREATE_HOOK(NAME) NAME(net, sock, protocol, kern)
 #else
 #define DECLARE_CREATE_HOOK(NAME) int NAME(struct net *net, struct socket *sock, int protocol)
@@ -94,13 +95,10 @@ static inline int sock_notifier_notify(unsigned long event, struct sock *sk)
 	return result;
 }
 
-void inet_sock_destruct_hook(struct sock *sk)
-{
+void inet_sock_destruct_handler(struct sock *sk) {
 	sock_notifier_notify(0xFFFFFFFF, sk);
-	sk->sk_destruct = inet_sock_destruct;
-	inet_sock_destruct(sk);
-	module_put(THIS_MODULE);
-}
+	jprobe_return();
+};
 
 static inline void _finish_hook(struct sock *sk)
 {
@@ -108,10 +106,8 @@ static inline void _finish_hook(struct sock *sk)
 		return;
 	BUG_ON(unlikely(sk->sk_destruct != inet_sock_destruct));
 	BUG_ON(unlikely(sk->sk_protinfo));
-	sk->sk_destruct = inet_sock_destruct_hook;
 	sk->sk_protinfo = (void *) (unsigned long)
 			(current->pid == current->tgid ? current->pid : current->tgid);
-	__module_get(THIS_MODULE);
 	sock_notifier_notify(0, sk);
 }
 
@@ -174,6 +170,11 @@ static int install_hook(const char *name,
 	return 0;
 }
 
+static struct jprobe inet_sock_destruct_jprobe = {
+	.kp.symbol_name = "inet_sock_destruct",
+	.entry = inet_sock_destruct_handler,
+};
+
 #ifdef CONFIG_SOCKET_NOTIFY_COMBINED
 #  define _STATIC
 #else
@@ -186,6 +187,10 @@ _STATIC int __init socket_notify_init(void)
 
 	if ((err = install_hook("IPv4", &inet_family_ops, &hooked_inet_family_ops)))
 		return err;
+	if ((err = register_jprobe(&inet_sock_destruct_jprobe)) < 0) {
+		printk(KERN_ERR "error registering inet_sock_destruct_jprobe\n");
+		return err;
+	}
 #if defined(CONFIG_IPV6)
 	if ((err = install_hook("IPv6", &inet6_family_ops, &hooked_inet6_family_ops))) {
 		sock_unregister(hooked_inet_family_ops.family);
@@ -203,6 +208,7 @@ _STATIC void socket_notify_remove(void)
 	reinstall_family("IPv6", &inet6_family_ops);
 #endif
 	sock_unregister(hooked_inet_family_ops.family);
+	unregister_jprobe(&inet_sock_destruct_jprobe);
 	reinstall_family("IPv4", &inet_family_ops);
 	synchronize_net();
 }
