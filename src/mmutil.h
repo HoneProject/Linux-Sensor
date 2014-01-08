@@ -12,9 +12,10 @@
 #define _MMUTIL_H
 
 #include <linux/mm_types.h>
+#include <linux/fs.h>
 
+struct file *mm_file(struct mm_struct *mm);
 char *mm_path(struct mm_struct *mm, char *buf, int buflen);
 int mm_argv(struct mm_struct *mm, char *buf, int buflen);
 
 #endif /* _MMUTIL_H */
-
