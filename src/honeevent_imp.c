@@ -8,13 +8,19 @@
  * Author: Brandon Carpenter
  */
 
+#include <crypto/hash.h>
+#include <crypto/sha.h>
+
 #include <linux/version.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/crypto.h>
 #include <linux/ctype.h>
+#include <linux/fs.h>
 #include <linux/skbuff.h>
 #include <linux/sched.h>
+#include <linux/string.h>
 #include <linux/stringify.h>
 #include <linux/poll.h>
 
@@ -63,6 +69,24 @@ static char *comment = "";
 module_param(comment, charp, S_IRUGO);
 MODULE_PARM_DESC(comment, "If given, will be included in the comment option "
 		"of the section header block.  Spaces can be encoded as \\040 or \\x20.");
+
+static int text_device = 1;
+module_param(text_device, int, S_IRUGO);
+MODULE_PARM_DESC(text_device,
+		 "An integer. If not zero, create a device using format_as_text, "
+		 "otherwise only pcapng output device.");
+
+static char *authorized_reader_exe_path = "";
+module_param(authorized_reader_exe_path, charp, S_IRUGO);
+MODULE_PARM_DESC(authorized_reader_exe_path,
+		 "A string. If set, the only file that's allowed to open the hone "
+		 "device will be this one.");
+
+static char *authorized_reader_exe_sha1 = "";
+module_param(authorized_reader_exe_sha1, charp, S_IRUGO);
+MODULE_PARM_DESC(authorized_reader_exe_sha1,
+                 "A string. If set, the only file that's allowed to open the hone "
+		 "device must have a sha1 has of this value.");
 
 #ifndef CONFIG_HONE_DEFAULT_PAGEORDER
 	#ifdef CONFIG_64BIT
@@ -116,6 +140,40 @@ struct hone_reader {
 	size_t length, offset;
 	char *buf;
 };
+
+/* pulled from security/integrity/ima_crypto.c */
+static int calc_sha1_hash(struct file *file, unsigned char *digest) {
+	loff_t i_size, offset = 0;
+	char *rbuf;
+	int rc;
+	struct shash_desc shash = {
+		.tfm = crypto_alloc_shash("sha1", 0, CRYPTO_ALG_ASYNC),
+	};
+
+	if ((rc = crypto_shash_init(&shash)) != 0)
+		return rc;
+	rc = -ENOMEM;
+	if (!(rbuf = kzalloc(PAGE_SIZE, GFP_KERNEL)))
+		return rc;
+	i_size = i_size_read(file->f_path.dentry->d_inode);
+	while (offset < i_size) {
+		int rbuf_len;
+		rbuf_len = kernel_read(file, offset, rbuf, PAGE_SIZE);
+		if (rbuf_len < 0) {
+			rc = rbuf_len;
+			break;
+		}
+		if (rbuf_len == 0)
+			break;
+		offset += rbuf_len;
+		if ((rc = crypto_shash_update(&shash, rbuf, rbuf_len)))
+			break;
+	}
+	kfree(rbuf);
+	if (!rc)
+		rc = crypto_shash_final(&shash, digest);
+	return rc;
+}
 
 static struct hone_event head_event = {HONE_USER_HEAD, {ATOMIC_INIT(1)}};
 static struct hone_event tail_event = {HONE_USER_TAIL, {ATOMIC_INIT(1)}};
@@ -338,7 +396,6 @@ static struct hone_reader *alloc_hone_reader(void)
 				__get_free_pages(GFP_KERNEL | __GFP_ZERO, ring->pageorder)))
 		goto alloc_failed;
 	ring->length = size_of_pages(ring->pageorder) / sizeof(*(ring->data));
-	//reader->format = format_as_text;
 	reader->format = format_as_pcapng;
 	atomic_set(&reader->flags, READER_HEAD | READER_INIT);
 	sema_init(&reader->sem, 1);
@@ -370,7 +427,7 @@ static struct hone_event *__add_files(struct hone_reader *reader,
 	struct sock *sk;
 	unsigned long flags, set;
 	int i, fd;
-	
+
 	if (!(files = get_files_struct(task)))
 		return event;
 	spin_lock_irqsave(&files->file_lock, flags);
@@ -450,13 +507,40 @@ static void add_initial_events(struct hone_reader *reader)
 	reader->event = add_current_tasks(reader, NULL);
 }
 
+static inline char* sha1_to_string(unsigned char* digest, char *out) {
+	int i;
+	for (i = 0; i < SHA1_DIGEST_SIZE; i++)
+		snprintf(out + (i * 2), 4, "%02x", *(digest + i));
+	return out;
+}
+
 static int hone_open(struct inode *inode, struct file *file)
 {
 	struct hone_reader *reader;
-	int err = -ENOMEM;
+	int err = -EPERM;
 
+	if (strlen(authorized_reader_exe_path) > 0) {
+		char tmp[128];
+		char *exe_name = mm_path(current->mm, tmp, 128);
+		if (strncmp(exe_name, authorized_reader_exe_path, 128) != 0)
+			goto reader_failed;
+	}
+
+	if (strlen(authorized_reader_exe_sha1) > 0) {
+		unsigned char digest[SHA1_DIGEST_SIZE];
+		char hash_buf[41];
+		if ((err = calc_sha1_hash(mm_file(current->mm), digest)) < 0)
+			goto reader_failed;
+		sha1_to_string(digest, hash_buf);
+		err = -EPERM;
+		if (strncmp(hash_buf, authorized_reader_exe_sha1, 41) != 0)
+			goto reader_failed;
+	}
+
+	err = -EINVAL;
 	if ((file->f_flags & O_ACCMODE) != O_RDONLY)
-		return -EINVAL;
+		goto reader_failed;
+	err = -ENOMEM;
 	if (!(reader = alloc_hone_reader()))
 		goto reader_failed;
 	if (iminor(inode) == 1)
@@ -706,7 +790,8 @@ static int __init honeevent_init(void)
 	}
 
 	device_create(class_hone, NULL, MKDEV(major, 0), NULL, "%s", devname);
-	device_create(class_hone, NULL, MKDEV(major, 1), NULL, "%st", devname);
+	if (text_device != 0)
+		device_create(class_hone, NULL, MKDEV(major, 1), NULL, "%st", devname);
 
 	printk(KERN_INFO "%s: v%s module successfully loaded with major number %d\n",
 			mod_name, version, major);
@@ -726,4 +811,3 @@ static void __exit honeevent_exit(void)
 
 module_init(honeevent_init);
 module_exit(honeevent_exit);
-
