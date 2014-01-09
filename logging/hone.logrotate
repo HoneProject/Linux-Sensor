@@ -7,9 +7,11 @@
 	compress
 	delaycompress
 	daily
+	maxsize 1G
+	notifempty
 	rotate 20
 	postrotate
-		/usr/bin/systemctl try-restart hone.service
+		/usr/bin/systemctl reload-or-try-restart hone.service
 	endscript
 }
 
