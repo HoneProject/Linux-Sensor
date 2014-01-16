@@ -2,6 +2,11 @@
 
 [Unit]
 Description=Hone Packet-process Logging Daemon
+## If using dkms to build hone, the following lines should be uncommented
+#Conflicts=hone.service
+#After=dkms.service
+## and the following line should be commented.
+Conflicts=hone-dkms.service
 Before=network.target
 
 [Service]
