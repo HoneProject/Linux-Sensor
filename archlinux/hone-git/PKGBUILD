@@ -51,9 +51,9 @@ package_hone-sensor-dkms-git() {
   install=hone-sensor-dkms.install
   backup=(etc/udev/rules.d/60-hone.rules)
   depends=(dkms)
-  optdepends=('hone-reader-dkms-git: capture log files on system start')
+  optdepends=('hone-reader-dkms: capture log files on system start')
   conflicts=(hone-sensor hone-sensor-dkms hone-sensor-git hone-reader hone-reader-git)
-  provides=(hone-sensor hone-sensor-dkms)
+  provides=(hone-sensor-dkms)
   options=('!strip')
 
   cd "$startdir/$pkgbase"
@@ -96,7 +96,7 @@ package_hone-sensor-git() {
   install=hone-sensor.install
   backup=(etc/udev/rules.d/60-hone.rules)
   depends=(linux)
-  optdepends=('hone-reader-git: capture log files on system start')
+  optdepends=('hone-reader: capture log files on system start')
   conflicts=(hone-sensor hone-sensor-dkms hone-sensor-dkms-git hone-reader-dkms hone-reader-dkms-git)
   provides=(hone-sensor)
   options=('!strip')
@@ -155,7 +155,7 @@ package_hone-reader-dkms-git() {
   optdepends=('systemd: start hone captures on system startup'
               'logrotate: rotate capture files')
   conflicts=(hone-reader hone-reader-dkms hone-reader-git)
-  provides=(hone-reader hone-reader-dkms)
+  provides=(hone-reader-dkms)
 
   _package_hone-reader
   sed -i -r '/^#(After|Conflicts)=/{s/^#//;b};/^Conflicts=/s/^/#/' "$pkgdir/usr/lib/systemd/system/hone.service"
