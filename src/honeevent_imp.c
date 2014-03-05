@@ -77,7 +77,7 @@ module_param(pageorder, uint, S_IWUSR|S_IRUGO);
 MODULE_PARM_DESC(pageorder,
 		"Specifies the page order to use when allocating the ring buffer "
 		"(default: " __stringify(CONFIG_HONE_DEFAULT_PAGEORDER) ").  The buffer "
-		"size is computed as PAGESIZE * (1 << pageorder).");
+		"size is computed as PAGE_SIZE * (1 << pageorder).");
 
 static struct class *class_hone;
 
