@@ -75,7 +75,13 @@ static int fault_handler(struct kprobe *p, struct pt_regs *regs, int trapnr)
 	return 0;
 }
 
-static unsigned int nf_hook_v4_in(unsigned int hook, struct sk_buff *skb,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0)
+typedef const struct nf_hook_ops * nf_hook_type;
+#else
+typedef unsigned int nf_hook_type;
+#endif
+
+static unsigned int nf_hook_v4_in(nf_hook_type hook, struct sk_buff *skb,
 		const struct net_device *indev, const struct net_device *outdev,
 		int (*okfn)(struct sk_buff *))
 {
@@ -88,7 +94,7 @@ static unsigned int nf_hook_v4_in(unsigned int hook, struct sk_buff *skb,
 }
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-static unsigned int nf_hook_v6_in(unsigned int hook, struct sk_buff *skb,
+static unsigned int nf_hook_v6_in(nf_hook_type hook, struct sk_buff *skb,
 		const struct net_device *indev, const struct net_device *outdev,
 		int (*okfn)(struct sk_buff *))
 {
@@ -101,7 +107,7 @@ static unsigned int nf_hook_v6_in(unsigned int hook, struct sk_buff *skb,
 }
 #endif
 
-static unsigned int nf_hook_out(unsigned int hook, struct sk_buff *skb,
+static unsigned int nf_hook_out(nf_hook_type hook, struct sk_buff *skb,
 		                          const struct net_device *indev,
 		                          const struct net_device *outdev,
 		                          int (*okfn)(struct sk_buff *))
