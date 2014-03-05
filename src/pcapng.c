@@ -414,6 +414,7 @@ static size_t format_packet_block(struct packet_event *event,
 		unsigned int snaplen, struct timestamp *tstamp, char *buf, size_t buflen)
 {
 	char *pos = buf;
+	int offset;
 	unsigned int *length_top, *length_end, *length_cap;
 	struct sk_buff *skb = event->skb;
 
@@ -431,10 +432,11 @@ static size_t format_packet_block(struct packet_event *event,
 	pos += block_set(pos, uint32_t, skb->len);    // packet length
 
 	// packet data
+	offset = skb_network_header(skb) - skb->data;  // offset should be <= 0
 	if ((*length_cap = maxoptlen(buflen - (pos - buf),
-					(snaplen ? min(skb->len, snaplen) : skb->len)))) {
+				(snaplen ? min(skb->len - offset, snaplen) : skb->len - offset)))) {
 		unsigned int n = *length_cap & 3 ? 4 - (*length_cap & 3) : 0;
-		if (skb_copy_bits(skb, 0, pos, *length_cap))
+		if (skb_copy_bits(skb, offset, pos, *length_cap))
 			BUG();
 		pos += *length_cap;
 		memset(pos, 0, n);
