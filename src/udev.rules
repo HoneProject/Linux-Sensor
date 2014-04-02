@@ -1,1 +1,0 @@
-SUBSYSTEM=="hone", GROUP="hone", MODE="0440"
