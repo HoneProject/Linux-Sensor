@@ -8,12 +8,16 @@
  * Author: Brandon Carpenter
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
 #include <linux/skbuff.h>
 #include <linux/cred.h>
 #include <linux/sched.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)
+#include <linux/uidgid.h>
+#endif
 
 #include <net/sock.h>
 
@@ -32,6 +36,15 @@ static DEFINE_STATISTICS(hone_received);
 static DEFINE_STATISTICS(hone_dropped);
 
 #define copy_atomic64(dst, src) atomic64_set(&(dst), atomic64_read(&(src)))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)
+#define uid_from_kuid(id) \
+  from_kuid(current_user_ns(), id);
+#define gid_from_kgid(id) \
+  from_kgid(current_user_ns(), id);
+#else
+#define uid_from_kuid(id) id;
+#define gid_from_kgid(id) id;
+#endif
 
 static void copy_statistics(const struct statistics *src, struct statistics *dst)
 {
@@ -154,8 +167,8 @@ struct hone_event *__alloc_process_event(
 		pev->tgid = task->tgid;
 		rcu_read_lock();
 		cred = __task_cred(task);
-		pev->uid = cred->euid;
-		pev->gid = cred->egid;
+		pev->uid = uid_from_kuid(cred->euid);
+		pev->gid = gid_from_kgid(cred->egid);
 		rcu_read_unlock();
 	}
 	return event;
@@ -218,8 +231,8 @@ struct hone_event *__alloc_socket_event(unsigned long sock, int type,
 		sockev->tgid = task->tgid;
 		rcu_read_lock();
 		cred = __task_cred(task);
-		sockev->uid = cred->euid;
-		sockev->gid = cred->egid;
+		sockev->uid = uid_from_kuid(cred->euid);
+		sockev->gid = gid_from_kgid(cred->egid);
 		rcu_read_unlock();
 	}
 	return event;
