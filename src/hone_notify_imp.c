@@ -8,12 +8,20 @@
  * Author: Brandon Carpenter
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
 #include <linux/skbuff.h>
 #include <linux/cred.h>
 #include <linux/sched.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)
+   #include <linux/uidgid.h>
+#else
+   #define __kuid_val(_uid) _uid
+   #define __kgid_val(_gid) _gid
+#endif
 
 #include <net/sock.h>
 
@@ -154,8 +162,8 @@ struct hone_event *__alloc_process_event(
 		pev->tgid = task->tgid;
 		rcu_read_lock();
 		cred = __task_cred(task);
-		pev->uid = cred->euid;
-		pev->gid = cred->egid;
+		pev->uid = __kuid_val(cred->euid);
+		pev->gid = __kgid_val(cred->egid);
 		rcu_read_unlock();
 	}
 	return event;
@@ -218,8 +226,8 @@ struct hone_event *__alloc_socket_event(unsigned long sock, int type,
 		sockev->tgid = task->tgid;
 		rcu_read_lock();
 		cred = __task_cred(task);
-		sockev->uid = cred->euid;
-		sockev->gid = cred->egid;
+		sockev->uid = __kuid_val(cred->euid);
+		sockev->gid = __kgid_val(cred->egid);
 		rcu_read_unlock();
 	}
 	return event;
