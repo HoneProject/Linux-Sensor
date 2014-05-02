@@ -28,6 +28,8 @@ struct process_event {
 	pid_t ppid;
 	pid_t tgid;
 	uid_t uid;
+	uid_t euid;
+	uid_t loginuid;
 	gid_t gid;
 };
 

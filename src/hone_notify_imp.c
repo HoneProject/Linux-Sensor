@@ -170,7 +170,9 @@ struct hone_event *__alloc_process_event(
 			pev->mm = task_mm(task);
 		rcu_read_lock();
 		cred = __task_cred(task);
-		pev->uid = __kuid_val(cred->euid);
+		pev->uid = __kuid_val(cred->uid);
+		pev->euid = __kuid_val(cred->euid);
+		pev->loginuid = __kuid_val(task->loginuid);
 		pev->gid = __kgid_val(cred->egid);
 		rcu_read_unlock();
 	}
@@ -423,4 +425,3 @@ EXPORT_SYMBOL(__alloc_socket_event);
 EXPORT_SYMBOL(free_hone_event);
 
 #endif // CONFIG_HONE_NOTIFY_COMBINED
-

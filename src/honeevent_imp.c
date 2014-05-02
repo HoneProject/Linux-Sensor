@@ -138,7 +138,7 @@ static unsigned int format_as_text(
 		struct process_event *pev = &event->process;
 		printbuf("%lu.%09lu %s %d %d %d %d\n",
 				event->ts.tv_sec, event->ts.tv_nsec, event_names[pev->event],
-				pev->pid, pev->ppid, pev->uid, pev->gid);
+				pev->pid, pev->ppid, pev->euid, pev->gid);
 		if (pev->mm) {
 			n--;
 			if (pev->event == PROC_KTHD)
