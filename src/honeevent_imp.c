@@ -127,7 +127,7 @@ static unsigned int format_as_text(
 		const struct device_info *devinfo, const struct reader_info *info,
 		struct hone_event *event, char *buf, unsigned int buflen)
 {
-	static const char *event_names[] = {"????", "FORK", "EXEC", "EXIT"};
+	static const char *event_names[] = {"????", "FORK", "EXEC", "EXIT", "KTHD"};
 	unsigned int n = 0;
 
 #define printbuf(fmt, ...) ({ if ((n += snprintf(buf + n, buflen - n, fmt, ##__VA_ARGS__)) >= buflen) { goto out_long; }; n; })
@@ -136,24 +136,28 @@ static unsigned int format_as_text(
 	case HONE_PROCESS:
 	{
 		struct process_event *pev = &event->process;
-		printbuf("%lu.%09lu %s %d %d %d %d %d\n",
+		printbuf("%lu.%09lu %s %d %d %d %d\n",
 				event->ts.tv_sec, event->ts.tv_nsec, event_names[pev->event],
-				pev->pid, pev->ppid, pev->tgid, pev->uid, pev->gid);
+				pev->pid, pev->ppid, pev->uid, pev->gid);
 		if (pev->mm) {
-			char *path, *argv;
 			n--;
-			printbuf(" \"");
-			if ((path = mm_path(pev->mm, buf + n, buflen -n - 3))) {
-				int pathlen = strlen(path);
-				memmove(buf + n, path, pathlen);
-				n += pathlen;
-			}
-			printbuf("\" ");
-			argv = buf + n;
-			n += mm_argv(pev->mm, buf + n, buflen - n - 1);
-			for ( ; argv < buf + n; argv++) {
-				if (*argv == '\0')
-					*argv = ' ';
+			if (pev->event == PROC_KTHD)
+				printbuf(" [%s]", pev->comm);
+			else {
+				char *path, *argv;
+				printbuf(" \"");
+				if ((path = mm_path(pev->mm, buf + n, buflen -n - 3))) {
+					int pathlen = strlen(path);
+					memmove(buf + n, path, pathlen);
+					n += pathlen;
+				}
+				printbuf("\" ");
+				argv = buf + n;
+				n += mm_argv(pev->mm, buf + n, buflen - n - 1);
+				for ( ; argv < buf + n; argv++) {
+					if (*argv == '\0')
+						*argv = ' ';
+				}
 			}
 			printbuf("\n");
 		}
@@ -162,9 +166,9 @@ static unsigned int format_as_text(
 	case HONE_SOCKET:
 	{
 		struct socket_event *sockev = &event->socket;
-		printbuf("%lu.%09lu SOCK %c %d %d %d %d %d %08lx\n",
+		printbuf("%lu.%09lu SOCK %c %d %d %d %d %08lx\n",
 				event->ts.tv_sec, event->ts.tv_nsec, sockev->event ? 'C' : 'O',
-				sockev->pid, sockev->ppid, sockev->tgid, sockev->uid, sockev->gid,
+				sockev->pid, sockev->ppid, sockev->uid, sockev->gid,
 				sockev->sock & 0xFFFFFFFF);
 		break;
 	}

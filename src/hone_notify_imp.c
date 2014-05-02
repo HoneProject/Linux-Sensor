@@ -111,8 +111,13 @@ void free_hone_event(struct hone_event *event)
 		if (event->packet.skb)
 			kfree_skb(event->packet.skb);
 	} else if (event->type == HONE_PROCESS) {
-		if (event->process.mm)
-			mmput(event->process.mm);
+		if (event->process.mm) {
+			if (event->process.event == PROC_KTHD)
+				kfree(event->process.comm);
+			else
+				mmput(event->process.mm);
+			event->process.mm = NULL;
+		}
 	}
 	kmem_cache_free(hone_cache, event);
 }
@@ -155,14 +160,14 @@ struct hone_event *__alloc_process_event(
 	if ((event = alloc_hone_event(HONE_PROCESS, flags))) {
 		struct process_event *pev = &event->process;
 		const struct cred *cred;
-		pev->event = type;
+		pev->event = (type != PROC_EXIT && task->flags & PF_KTHREAD) ? PROC_KTHD : type;
 		pev->pid = task->pid;
 		pev->ppid = task->real_parent->pid;
 		pev->tgid = task->tgid;
-		if (type == PROC_EXEC || (type == PROC_FORK && pev->ppid == 1))
-		   pev->mm = task_mm(task);
-		else
-		   pev->mm = NULL;
+		if (pev->event == PROC_KTHD)
+			pev->comm = kstrndup(task->comm, sizeof(task->comm), flags);
+		else if (type == PROC_EXEC || (type == PROC_FORK && pev->ppid == 1))
+			pev->mm = task_mm(task);
 		rcu_read_lock();
 		cred = __task_cred(task);
 		pev->uid = __kuid_val(cred->euid);

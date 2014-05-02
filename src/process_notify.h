@@ -14,6 +14,7 @@
 #define PROC_FORK 1
 #define PROC_EXEC 2
 #define PROC_EXIT 3
+#define PROC_KTHD 4
 
 #ifdef __KERNEL__
 extern int process_notifier_register(struct notifier_block *nb);

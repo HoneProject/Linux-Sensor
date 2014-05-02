@@ -291,6 +291,7 @@ static inline unsigned int maxoptlen(int buflen, unsigned int length)
 static size_t format_process_block(struct process_event *event,
 		struct timestamp *tstamp, char *buf, size_t buflen)
 {
+	static const uint32_t event_map[] = {0, 1, 0, -1, 2};
 	char *pos = buf;
 	unsigned int *length_top, *length_end; //, length;
 
@@ -304,7 +305,7 @@ static size_t format_process_block(struct process_event *event,
 	pos += block_set(pos, uint32_t, event->tgid);    // PID
 	pos += block_set(pos, struct timestamp, *tstamp); // timestamp
 	if (event->event != PROC_EXEC)
-		pos += block_opt_t(pos, 2, uint32_t, (event->event == PROC_FORK ? 1 : -1));
+		pos += block_opt_t(pos, 2, uint32_t, event_map[event->event]);
 	pos += block_opt_t(pos, 5, uint32_t, event->ppid);
 	pos += block_opt_t(pos, 6, uint32_t, event->uid);
 	pos += block_opt_t(pos, 7, uint32_t, event->gid);
@@ -313,16 +314,27 @@ static size_t format_process_block(struct process_event *event,
 		unsigned int n, length;
 		ptr = pos + 4;
 		length = buflen - (pos - buf) - 16;
-		if (length > 0 && (tmp = mm_path(event->mm, ptr, length))) {
-			if ((length = maxoptlen(length, strlen(tmp)))) {
-				memmove(ptr, tmp, length);
+		if (event->event == PROC_KTHD) {
+			if ((length = maxoptlen(length, (n = strlen(event->comm)) + 2))) {
+				ptr[0] = '[';
+				if (length > 1)
+					memcpy(ptr + 1, event->comm, length - 1);
+				if (length > n + 1)
+					ptr[length - 1] = ']';
 				pos += block_opt_ptr(pos, 3, NULL, length);
 			}
+		} else {
+			if (length > 0 && (tmp = mm_path(event->mm, ptr, length))) {
+				if ((length = maxoptlen(length, strlen(tmp)))) {
+					memmove(ptr, tmp, length);
+					pos += block_opt_ptr(pos, 3, NULL, length);
+				}
+			}
+			ptr = pos + 4;
+			length = buflen - (pos - buf) - 16;
+			if (length > 0 && (n = mm_argv(event->mm, ptr, length)))
+				pos += block_opt_ptr(pos, 4, NULL, maxoptlen(length, n));
 		}
-		ptr = pos + 4;
-		length = buflen - (pos - buf) - 16;
-		if (length > 0 && (n = mm_argv(event->mm, ptr, length)))
-			pos += block_opt_ptr(pos, 4, NULL, maxoptlen(length, n));
 	}
 	pos += block_end_opt(pos);
 	length_end = (typeof(length_end)) pos;

@@ -19,7 +19,10 @@
 #define HONE_USER 0x8000
 
 struct process_event {
-	struct mm_struct *mm;
+	union {
+		struct mm_struct *mm;
+		char *comm;
+	};
 	int event;
 	pid_t pid;
 	pid_t ppid;
