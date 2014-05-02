@@ -155,11 +155,14 @@ struct hone_event *__alloc_process_event(
 	if ((event = alloc_hone_event(HONE_PROCESS, flags))) {
 		struct process_event *pev = &event->process;
 		const struct cred *cred;
-		pev->mm = (type == PROC_EXEC) ? task_mm(task) : NULL;
 		pev->event = type;
 		pev->pid = task->pid;
 		pev->ppid = task->real_parent->pid;
 		pev->tgid = task->tgid;
+		if (type == PROC_EXEC || (type == PROC_FORK && pev->ppid == 1))
+		   pev->mm = task_mm(task);
+		else
+		   pev->mm = NULL;
 		rcu_read_lock();
 		cred = __task_cred(task);
 		pev->uid = __kuid_val(cred->euid);

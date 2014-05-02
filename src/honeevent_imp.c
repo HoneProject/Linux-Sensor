@@ -139,7 +139,7 @@ static unsigned int format_as_text(
 		printbuf("%lu.%09lu %s %d %d %d %d %d\n",
 				event->ts.tv_sec, event->ts.tv_nsec, event_names[pev->event],
 				pev->pid, pev->ppid, pev->tgid, pev->uid, pev->gid);
-		if (pev->event == PROC_EXEC && pev->mm) {
+		if (pev->mm) {
 			char *path, *argv;
 			n--;
 			printbuf(" \"");
