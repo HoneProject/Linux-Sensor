@@ -165,9 +165,15 @@ struct hone_event *__alloc_process_event(
 		pev->ppid = task->real_parent->pid;
 		pev->tgid = task->tgid;
 		if (pev->event == PROC_KTHD)
+		{
 			pev->comm = kstrndup(task->comm, sizeof(task->comm), flags);
+			BUG_ON(unlikely(!pev->comm));
+		}
 		else if (type == PROC_EXEC || (type == PROC_FORK && pev->ppid == 1))
+		{
 			pev->mm = task_mm(task);
+			BUG_ON(unlikely(!pev->mm));
+		}
 		rcu_read_lock();
 		cred = __task_cred(task);
 		pev->uid = __kuid_val(cred->uid);
