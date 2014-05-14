@@ -186,7 +186,7 @@ static int extract_icmp6_fields(const struct sk_buff *skb,
 {
 	struct ipv6hdr *inside_iph, _inside_iph;
 	struct icmp6hdr *icmph, _icmph;
-	__be16 *ports, _ports[2];
+	__be16 *ports, _ports[2], fragment_offset;
 	u8 inside_nexthdr;
 	int inside_hdrlen;
 
