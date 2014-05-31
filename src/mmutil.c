@@ -17,7 +17,7 @@
 #include <linux/highmem.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25)
-	#define D_PATH(mnt, dentry, buf, size) \
+	#define D_PATH(dentry, mnt, buf, size) \
 		({ struct path _p = {(mnt), (dentry)}; d_path(&_p, (buf), (size)); })
 #else
 	#define D_PATH d_path
@@ -47,11 +47,11 @@ static char *__exe_path(struct mm_struct *mm, char *buf, int buflen)
 		struct vfsmount *mnt;
 		struct dentry *dentry;
 
-		mnt = mntget(exe_file->f_path.mnt);
-		dentry = dget(exe_file->f_path.dentry);
+		mnt = mntget(exe_file->f_vfsmnt);
+		dentry = dget(exe_file->f_dentry);
 
 		if (mnt && dentry) {
-			path = D_PATH(mnt, dentry, buf, buflen);
+			path = D_PATH(dentry, mnt, buf, buflen);
 			dput(dentry);
 			mntput(mnt);
 		}
