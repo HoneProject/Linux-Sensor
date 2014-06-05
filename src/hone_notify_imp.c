@@ -15,6 +15,8 @@
 #include <linux/skbuff.h>
 #include <linux/cred.h>
 #include <linux/sched.h>
+#include <linux/mm.h>
+#include <linux/workqueue.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)
    #include <linux/uidgid.h>
@@ -38,6 +40,13 @@ static DEFINE_RWLOCK(notifier_lock);
 static struct timespec start_time;
 static DEFINE_STATISTICS(hone_received);
 static DEFINE_STATISTICS(hone_dropped);
+
+static struct kmem_cache *mmput_cache;
+static struct workqueue_struct *mmput_wq;
+struct delayed_mmput_struct {
+	struct work_struct ws;
+	struct mm_struct *mm;
+};
 
 #define copy_atomic64(dst, src) atomic64_set(&(dst), atomic64_read(&(src)))
 
@@ -105,6 +114,13 @@ static inline int hone_notifier_notify(struct hone_event *event)
 	return result;
 }
 
+static void delayed_mmput(struct work_struct *work)
+{
+	struct delayed_mmput_struct *w = (struct delayed_mmput_struct*)work;
+	mmput(w->mm);
+	kmem_cache_free(mmput_cache, w);
+}
+
 void free_hone_event(struct hone_event *event)
 {
 	if (event->type == HONE_PACKET) {
@@ -112,10 +128,16 @@ void free_hone_event(struct hone_event *event)
 			kfree_skb(event->packet.skb);
 	} else if (event->type == HONE_PROCESS) {
 		if (event->process.mm) {
-			if (event->process.event == PROC_KTHD)
+			if (event->process.event == PROC_KTHD) {
 				kfree(event->process.comm);
-			else
-				mmput(event->process.mm);
+			} else {
+				struct delayed_mmput_struct *delayed_mm =
+					kmem_cache_zalloc(mmput_cache, GFP_ATOMIC);
+				BUG_ON(unlikely(!delayed_mm));
+				delayed_mm->mm = event->process.mm;
+				INIT_WORK((struct work_struct*)delayed_mm, delayed_mmput);
+				BUG_ON(unlikely(!queue_work(mmput_wq, (struct work_struct*)delayed_mm)));
+			}
 			event->process.mm = NULL;
 		}
 	}
@@ -372,13 +394,29 @@ _STATIC int __init hone_notify_init(void)
 					sizeof(struct hone_event), 0, 0, NULL))) {
 		printk(KERN_ERR "%s: kmem_cache_create() failed\n", THIS_MODULE->name);
 		err = -ENOMEM;
-		goto out;
+		goto out_hone_cache;
+	}
+	if (!(mmput_cache = kmem_cache_create("hone_delayed_mmput",
+					      sizeof(struct delayed_mmput_struct),
+					      0, 0, NULL))) {
+		pr_err("%s: kmem_cache_create() failed on delayed_mm_cache\n",
+		       THIS_MODULE->name);
+		goto out_mmput_cache;
+	}
+	mmput_wq = create_workqueue("hone_mmput");
+	if (!mmput_wq) {
+		err = -1;
+		goto out_workqueue;
 	}
 	ktime_get_ts(&start_time);
 
 	return 0;
 
-out:
+out_workqueue:
+	kmem_cache_destroy(mmput_cache);
+out_mmput_cache:
+	kmem_cache_destroy(hone_cache);
+out_hone_cache:
 	packet_notify_remove();
 out_packet_notify:
 	socket_notify_remove();
@@ -394,6 +432,8 @@ _STATIC void hone_notify_release(void)
 	socket_notify_remove();
 	process_notify_remove();
 	kmem_cache_destroy(hone_cache);
+	kmem_cache_destroy(mmput_cache);
+	destroy_workqueue(mmput_wq);
 }
 
 #ifndef CONFIG_HONE_NOTIFY_COMBINED
