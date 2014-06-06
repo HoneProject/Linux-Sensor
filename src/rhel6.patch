@@ -8,8 +8,6 @@
  
  $(defsyms-lds): $(obj)/%.defsyms: $(obj)/.System.map.md5
  	$(call cmd,defsyms)
-diff --git a/src/socket_notify.c b/src/socket_notify.c
-index 3a2574e..e1ed290 100644
 --- a/src/socket_notify.c
 +++ b/src/socket_notify.c
 @@ -26,7 +26,7 @@
