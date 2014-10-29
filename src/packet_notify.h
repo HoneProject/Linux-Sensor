@@ -15,7 +15,8 @@
 #define PKTNOT_PACKET_OUT 2
 
 struct packet_args {
-	struct sock *sk;
+	unsigned long sock;
+	unsigned long pid;
 	struct sk_buff *skb;
 };
 

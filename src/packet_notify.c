@@ -62,8 +62,14 @@ static inline int packet_notifier_notify(
 
 static int packet_rcv_handler(struct sock *sk, struct sk_buff *skb)
 {
-	struct packet_args pargs = {sk, skb};
+	struct packet_args pargs;
+	if (!sk)
+		goto out;
+	pargs.sock = (unsigned long) sk;
+	pargs.pid = (unsigned long) sk->sk_protinfo;
+	pargs.skb = skb;
 	packet_notifier_notify(PKTNOT_PACKET_IN, &pargs);
+out:
 	jprobe_return();
 	return 0;
 }
@@ -86,10 +92,19 @@ static unsigned int nf_hook_v4_in(nf_hook_type hook, struct sk_buff *skb,
 		int (*okfn)(struct sk_buff *))
 {
 	struct sock *sk = lookup_v4_sock(skb, indev);
-	struct packet_args pargs = {sk, skb};
+	struct packet_args pargs;
+
+	if (!sk)
+		goto out;
+
+	pargs.sock = (unsigned long) sk;
+	pargs.pid = (unsigned long) sk->sk_protinfo;
+	pargs.skb = skb;
+
+	put_sock(sk);
 	packet_notifier_notify(PKTNOT_PACKET_IN, &pargs);
-	if (sk)
-		put_sock(sk);
+
+out:
 	return NF_ACCEPT;
 }
 
@@ -99,10 +114,19 @@ static unsigned int nf_hook_v6_in(nf_hook_type hook, struct sk_buff *skb,
 		int (*okfn)(struct sk_buff *))
 {
 	struct sock *sk = lookup_v6_sock(skb, indev);
-	struct packet_args pargs = {sk, skb};
+	struct packet_args pargs;
+
+	if (!sk)
+		got out;
+
+	pargs.sock = (unsigned long) sk;
+	pargs.pid = (unsigned long) sk->sk_protinfo;
+	pargs.skb = skb;
+
+	put_sock(sk);
 	packet_notifier_notify(PKTNOT_PACKET_IN, &pargs);
-	if (sk)
-		put_sock(sk);
+
+out:
 	return NF_ACCEPT;
 }
 #endif
@@ -112,7 +136,19 @@ static unsigned int nf_hook_out(nf_hook_type hook, struct sk_buff *skb,
 		                          const struct net_device *outdev,
 		                          int (*okfn)(struct sk_buff *))
 {
-	struct packet_args pargs = {skb->sk, skb};
+	struct packet_args pargs;
+
+	pargs.skb = skb;
+	if (skb->sk) {
+		sock_hold(skb->sk);
+		pargs.sock = (unsigned long) skb->sk;
+		pargs.pid = (unsigned long) skb->sk->sk_protinfo;
+		sock_put(skb->sk);
+	} else {
+		pargs.sock = 0;
+		pargs.pid = 0;
+	}
+
 	packet_notifier_notify(PKTNOT_PACKET_OUT, &pargs);
 	return NF_ACCEPT;
 }

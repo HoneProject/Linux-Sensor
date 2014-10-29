@@ -308,6 +308,8 @@ static size_t format_process_block(struct process_event *event,
 		pos += block_opt_t(pos, 2, uint32_t, event_map[event->event]);
 	pos += block_opt_t(pos, 5, uint32_t, event->ppid);
 	pos += block_opt_t(pos, 6, uint32_t, event->uid);
+	pos += block_opt_t(pos, 8, uint32_t, event->euid);
+	pos += block_opt_t(pos, 9, uint32_t, event->loginuid);
 	pos += block_opt_t(pos, 7, uint32_t, event->gid);
 	if (event->mm) {
 		char *tmp, *ptr;
