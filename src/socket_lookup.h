@@ -175,7 +175,7 @@ static struct sock *lookup_v4_sock(const struct sk_buff *skb,
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 #  if LINUX_VERSION_CODE >= KERNEL_VERSION(3,3,2)
-#    define SKIPHDR(...) ipv6_skip_exthdr(__VA_ARGS__, NULL)
+#    define SKIPHDR(...) ({__be16 __offp; ipv6_skip_exthdr(__VA_ARGS__, &__offp);})
 #  else
 #    define SKIPHDR ipv6_skip_exthdr
 #  endif
@@ -336,4 +336,3 @@ static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 	return sk;
 }
 #endif
-
