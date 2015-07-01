@@ -396,7 +396,7 @@ static struct hone_event *__add_files(struct hone_reader *reader,
 							0, task, GFP_ATOMIC))) {
 				sk_event->next = event;
 				event = sk_event;
-				event->ts = task->start_time;
+				memcpy(&event->ts, &task->start_time, sizeof(event->ts));
 			} else {
 				atomic64_inc(&reader->info.dropped.socket);
 			}
@@ -428,7 +428,7 @@ static struct hone_event *add_current_tasks(
 						GFP_ATOMIC))) {
 			proc_event->next = event;
 			event = proc_event;
-			event->ts = task->start_time;
+			memcpy(&event->ts, &task->start_time, sizeof(event->ts));
 		} else {
 			atomic64_inc(&reader->info.dropped.process);
 		}
