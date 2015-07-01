@@ -87,7 +87,16 @@ static struct kretprobe fork_kretprobe = {
 	.handler = fork_handler,
 };
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,19,0)
+
+extern int do_execveat_common(void);
+static struct kretprobe exec_kretprobe = {
+	//.kp.symbol_name = "do_execve",
+	.kp.addr = (kprobe_opcode_t *) do_execveat_common,
+	.handler = exec_handler,
+};
+
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 
 extern int do_execve_common(void);
 static struct kretprobe exec_kretprobe = {
@@ -114,7 +123,7 @@ static struct kretprobe compat_exec_kretprobe = {
 };
 #endif
 
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0) */
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3,19,0) */
 
 static struct kprobe exit_kprobe = {
 	//.symbol_name = "do_exit",

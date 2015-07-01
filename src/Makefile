@@ -52,7 +52,7 @@ obj-$(CONFIG_PACKET_NOTIFY) += packet_notify.o
 packet_notify-defsyms := __udp6_lib_lookup
 
 obj-$(CONFIG_PROCESS_NOTIFY) += process_notify.o
-process_notify-defsyms := copy_process compat_do_execve do_execve do_execve_common
+process_notify-defsyms := copy_process compat_do_execve do_execve do_execve_common do_execveat_common
 
 obj-$(CONFIG_HONE_NOTIFY) += hone_notify.o
 hone_notify-y := hone_notify_imp.o \
