@@ -16,12 +16,8 @@
 #include <linux/mm.h>
 #include <linux/highmem.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,25)
-	#define D_PATH(mnt, dentry, buf, size) \
-		({ struct path _p = {(mnt), (dentry)}; d_path(&_p, (buf), (size)); })
-#else
-	#define D_PATH d_path
-#endif
+#define D_PATH(dentry, mnt, buf, size) \
+	({ struct path _p = {(mnt), (dentry)}; d_path(&_p, (buf), (size)); })
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,0,0)
 	#define __get_exe_file(mm) ((mm)->exe_file)
@@ -51,7 +47,7 @@ static char *__exe_path(struct mm_struct *mm, char *buf, int buflen)
 		dentry = dget(exe_file->f_path.dentry);
 
 		if (mnt && dentry) {
-			path = D_PATH(mnt, dentry, buf, buflen);
+			path = D_PATH(dentry, mnt, buf, buflen);
 			dput(dentry);
 			mntput(mnt);
 		}

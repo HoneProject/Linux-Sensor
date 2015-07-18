@@ -279,7 +279,8 @@ int ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 }
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0) */
 
-#  if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,37)
+#if defined(CONFIG_IPV6)
 extern struct sock *__udp6_lib_lookup(struct net *net,
 		struct in6_addr *saddr, __be16 sport,
 		struct in6_addr *daddr, __be16 dport,
@@ -288,7 +289,11 @@ extern struct sock *__udp6_lib_lookup(struct net *net,
 #define udp6_lib_lookup(net, saddr, sport, daddr, dport, dif) \
 	__udp6_lib_lookup((net), (struct in6_addr *) (saddr), (sport), \
 			(struct in6_addr *) (daddr), (dport), (dif), &udp_table)
-#  endif
+#else
+#define udp6_lib_lookup(net, saddr, sport, daddr, dport, dif) \
+	NULL
+#endif
+#endif
 
 static struct sock *lookup_v6_sock(const struct sk_buff *skb,
 			const struct net_device *indev)

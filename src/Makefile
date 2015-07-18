@@ -65,7 +65,7 @@ hone_notify-defsyms :=
 obj-$(CONFIG_HONEEVENT) += honeevent.o
 honeevent-y := honeevent_imp.o mmutil.o pcapng.o ringbuf.o \
 	$(call COMBINE,HONE_NOTIFY,$(hone_notify-y))
-honeevent-defsyms := uts_sem socket_file_ops get_files_struct put_files_struct
+honeevent-defsyms := uts_sem socket_file_ops get_files_struct put_files_struct getboottime
 
 # Handle all the *-defsyms magic.
 include $(src)/defsyms.mk
